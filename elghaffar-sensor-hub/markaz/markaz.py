@@ -8,7 +8,7 @@ import subprocess
 
 # Mapping: source ESP MAC -> list of (target location, target MAC, relay ON time)
 TRIGGERS = {
-    "C4D8D52996A2": [],  # /HAGGRAS>ASHRAF
+    "244CAB4F1201": [("DAHROOG", "5CCF7F44C358", 60)],  # /ABBAS>DAHROOG
     "4CEBD6ECEB83": [("DAHROOG", "5CCF7F44C358", 60)],  # /SHANKAL>DAHROOG
     #"5CCF7F44C358": [],  # /DAHROOG
     "8CCE4EE74956": [("DAHROOG", "5CCF7F44C358", 60)],  # /MARZOOK>>DAHROOG
@@ -41,25 +41,25 @@ def on_motion(client, userdata, msg):
 
         for target_location, target_mac, delay in TRIGGERS[source_mac]:
             relay_cmd_topic = f"home/{target_location}/{target_mac}/cmd"
-            print(f"{current_timestamp} - [Relay] {target_location} Sending REL_ON to {relay_cmd_topic}")
+            print(f"{current_timestamp} - [Relay] {msg.topic} Sending REL_ON to {relay_cmd_topic}")
             client.publish(relay_cmd_topic, "REL_ON")
 
             def delayed_off(topic=relay_cmd_topic, delay=delay):
                 time.sleep(delay)
-                print(f"{current_timestamp} - [Relay] {target_location} Sending REL_OFF to {topic}")
+                print(f"{current_timestamp} - [Relay] {msg.topic} Sending REL_OFF to {topic}")
                 client.publish(topic, "REL_OFF")
             
             threading.Thread(target=delayed_off, daemon=True).start()
 
             # Play the appropriate sound
-            if source_mac == '8CCE4EE74956':    # MARZOOK
-                play_sound('alarm-no3-14864.mp3')
-            elif source_mac == 'BCDDC2347051':  # DAHROOG
-                play_sound('warning-alarm-loop-1-279206.mp3')
-            elif source_mac == '4CEBD6ECEB83':  # SHANKAL
-                play_sound('warning-alarm-loop-1-279206.mp3')
-            else:
-                play_sound('snd_fragment_retrievewav-14728.mp3')
+            # if source_mac == '8CCE4EE74956':    # MARZOOK
+                # play_sound('alarm-no3-14864.mp3')
+            # elif source_mac == 'BCDDC2347051':  # DAHROOG
+                # play_sound('warning-alarm-loop-1-279206.mp3')
+            # elif source_mac == '4CEBD6ECEB83':  # SHANKAL
+                # play_sound('warning-alarm-loop-1-279206.mp3')
+            # else:
+                # play_sound('snd_fragment_retrievewav-14728.mp3')
         
         # Collect motion events for this camera IP
         if cam_ip:
@@ -115,7 +115,7 @@ def run_capture(cam_ip, duration=50, retries=3, wait_time=2):
             return  # Exit on success
 
         except subprocess.CalledProcessError as e:
-            print(f"{current_timestamp} - Attempt {attempt + 1} failed with return code: {e.returncode}. Error Output: {e.stderr}")
+            print(f"Attempt {attempt + 1} failed with return code: {e.returncode}. Error Output: {e.stderr}")
             if attempt < retries - 1:
                 print(f"{current_timestamp} - Retrying in {wait_time} seconds...")
                 time.sleep(wait_time)  # Wait before retrying
