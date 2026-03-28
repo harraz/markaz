@@ -85,7 +85,7 @@ def process_motion_events(current_timestamp):
     for cam_ip, events in motion_events.items():
         if events:  # If there are motion events for this camera IP
             print(f"{current_timestamp} - Starting capture for camera {cam_ip} with {len(events)} motion events.")
-            threading.Thread(target=run_capture, args=(cam_ip,), daemon=True).start()
+            threading.Thread(target=run_capture, args=(current_timestamp, cam_ip,), daemon=True).start()
             # After starting capture, clear the events to avoid duplicate captures
             motion_events[cam_ip] = []
 
@@ -101,7 +101,7 @@ def play_sound(file_name: str):
     pygame.mixer.music.load(full_path)
     pygame.mixer.music.play()
 
-def run_capture(cam_ip, duration=50, retries=3, wait_time=2):
+def run_capture(current_timestamp, cam_ip, duration=50, retries=3, wait_time=2):
     script_path = "./capture_stream.sh"
     command = ['bash', script_path, cam_ip, str(duration)]
 
