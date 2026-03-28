@@ -3,6 +3,7 @@ import time
 import threading
 import json
 from datetime import datetime
+from collections import defaultdict
 import pygame
 import subprocess
 
@@ -20,7 +21,9 @@ CAM_BY_SOURCE = {
     "5CCF7F44C358": "192.168.1.179",    # DAHROOG
 }
 
-BROKER = "localhost"
+MOTION_THRESHOLD = 3  # Number of allowed motions within the cooldown period
+COOLDOWN_PERIOD = 30  # Cooldown period in seconds
+motion_count = defaultdict(lambda: {'count': 0, 'last_time': 0})
 
 # Dictionary to collect motion events by camera IP
 motion_events = {}
@@ -35,9 +38,26 @@ def on_motion(client, userdata, msg):
         source_mac = data.get("mac", "")
         cam_ip = CAM_BY_SOURCE.get(source_mac)
 
-        if source_mac not in TRIGGERS:
-            print(f"{current_timestamp} - No relay trigger configured for source MAC: {source_mac}")
-            return  # Return if no triggers are found
+current_time = time.time()  # Get the current time in seconds
+
+    if source_mac not in TRIGGERS:
+        print(f"{current_timestamp} - No relay trigger configured for source MAC: {source_mac}")
+        return  # Return if no triggers are found
+
+    # Throttle logic
+    if motion_count[source_mac]['last_time'] == 0:
+        motion_count[source_mac]['last_time'] = current_time
+
+    # Check if the cooldown period has passed
+    if current_time - motion_count[source_mac]['last_time'] < COOLDOWN_PERIOD:
+        motion_count[source_mac]['count'] += 1
+        if motion_count[source_mac]['count'] > MOTION_THRESHOLD:
+            print(f"{current_timestamp} - [Throttled] Motion from {source_mac} ignored due to cooldown.")
+            return  # Ignore this motion event
+    else:
+        # Reset count and last_time if cooldown period has passed
+        motion_count[source_mac]['count'] = 1
+        motion_count[source_mac]['last_time'] = current_time
 
         for target_location, target_mac, delay in TRIGGERS[source_mac]:
             relay_cmd_topic = f"home/{target_location}/{target_mac}/cmd"
