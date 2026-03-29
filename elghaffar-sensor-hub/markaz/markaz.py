@@ -37,64 +37,63 @@ def on_motion(client, userdata, msg):
         data = json.loads(payload)
         source_mac = data.get("mac", "")
         cam_ip = CAM_BY_SOURCE.get(source_mac)
+        current_time = time.time()  # Get the current time in seconds
 
-current_time = time.time()  # Get the current time in seconds
+        if source_mac not in TRIGGERS:
+            print(f"{current_timestamp} - No relay trigger configured for source MAC: {source_mac}")
+            return  # Return if no triggers are found
 
-    if source_mac not in TRIGGERS:
-        print(f"{current_timestamp} - No relay trigger configured for source MAC: {source_mac}")
-        return  # Return if no triggers are found
+        # Throttle logic
+        if motion_count[source_mac]['last_time'] == 0:
+            motion_count[source_mac]['last_time'] = current_time
 
-    # Throttle logic
-    if motion_count[source_mac]['last_time'] == 0:
-        motion_count[source_mac]['last_time'] = current_time
+        # Check if the cooldown period has passed
+        if current_time - motion_count[source_mac]['last_time'] < COOLDOWN_PERIOD:
+            motion_count[source_mac]['count'] += 1
+            if motion_count[source_mac]['count'] > MOTION_THRESHOLD:
+                print(f"{current_timestamp} - [Throttled] Motion from {source_mac} ignored due to cooldown.")
+                return  # Ignore this motion event
+        else:
+            # Reset count and last_time if cooldown period has passed
+            motion_count[source_mac]['count'] = 1
+            motion_count[source_mac]['last_time'] = current_time
 
-    # Check if the cooldown period has passed
-    if current_time - motion_count[source_mac]['last_time'] < COOLDOWN_PERIOD:
-        motion_count[source_mac]['count'] += 1
-        if motion_count[source_mac]['count'] > MOTION_THRESHOLD:
-            print(f"{current_timestamp} - [Throttled] Motion from {source_mac} ignored due to cooldown.")
-            return  # Ignore this motion event
-    else:
-        # Reset count and last_time if cooldown period has passed
-        motion_count[source_mac]['count'] = 1
-        motion_count[source_mac]['last_time'] = current_time
+            for target_location, target_mac, delay in TRIGGERS[source_mac]:
+                relay_cmd_topic = f"home/{target_location}/{target_mac}/cmd"
+                print(f"{current_timestamp} - [Relay] {msg.topic} Sending REL_ON to {relay_cmd_topic}")
+                client.publish(relay_cmd_topic, "REL_ON")
 
-        for target_location, target_mac, delay in TRIGGERS[source_mac]:
-            relay_cmd_topic = f"home/{target_location}/{target_mac}/cmd"
-            print(f"{current_timestamp} - [Relay] {msg.topic} Sending REL_ON to {relay_cmd_topic}")
-            client.publish(relay_cmd_topic, "REL_ON")
+                def delayed_off(topic=relay_cmd_topic, delay=delay):
+                    time.sleep(delay)
+                    print(f"{current_timestamp} - [Relay] {msg.topic} Sending REL_OFF to {topic}")
+                    client.publish(topic, "REL_OFF")
+                
+                threading.Thread(target=delayed_off, daemon=True).start()
 
-            def delayed_off(topic=relay_cmd_topic, delay=delay):
-                time.sleep(delay)
-                print(f"{current_timestamp} - [Relay] {msg.topic} Sending REL_OFF to {topic}")
-                client.publish(topic, "REL_OFF")
+                # Play the appropriate sound
+                # if source_mac == '8CCE4EE74956':    # MARZOOK
+                    # play_sound('alarm-no3-14864.mp3')
+                # elif source_mac == 'BCDDC2347051':  # DAHROOG
+                    # play_sound('warning-alarm-loop-1-279206.mp3')
+                # elif source_mac == '4CEBD6ECEB83':  # SHANKAL
+                    # play_sound('warning-alarm-loop-1-279206.mp3')
+                # else:
+                    # play_sound('snd_fragment_retrievewav-14728.mp3')
             
-            threading.Thread(target=delayed_off, daemon=True).start()
-
-            # Play the appropriate sound
-            # if source_mac == '8CCE4EE74956':    # MARZOOK
-                # play_sound('alarm-no3-14864.mp3')
-            # elif source_mac == 'BCDDC2347051':  # DAHROOG
-                # play_sound('warning-alarm-loop-1-279206.mp3')
-            # elif source_mac == '4CEBD6ECEB83':  # SHANKAL
-                # play_sound('warning-alarm-loop-1-279206.mp3')
-            # else:
-                # play_sound('snd_fragment_retrievewav-14728.mp3')
-        
-        # Collect motion events for this camera IP
-        if cam_ip:
-            if cam_ip not in motion_events:
-                motion_events[cam_ip] = []  # Initialize the list if it doesn't exist
-            motion_events[cam_ip].append(current_timestamp)  # Store the event
-        
-        #print(TRIGGERS[source_mac][0][1])
-        if source_mac:
-            target_ghafeer_mac=TRIGGERS[source_mac][0][1]
-            remote_cam_ip=CAM_BY_SOURCE.get(target_ghafeer_mac)
-            if remote_cam_ip not in motion_events:
-                motion_events[remote_cam_ip] = []  # Initialize the list if it doesn't exist
-            motion_events[remote_cam_ip].append(current_timestamp)  # Store remote camera ip
-            print(f"{current_timestamp} - Calling Ghafeer mac - {target_ghafeer_mac} :Remote ghafeer camera - {remote_cam_ip}")
+            # Collect motion events for this camera IP
+            if cam_ip:
+                if cam_ip not in motion_events:
+                    motion_events[cam_ip] = []  # Initialize the list if it doesn't exist
+                motion_events[cam_ip].append(current_timestamp)  # Store the event
+            
+            #print(TRIGGERS[source_mac][0][1])
+            if source_mac:
+                target_ghafeer_mac=TRIGGERS[source_mac][0][1]
+                remote_cam_ip=CAM_BY_SOURCE.get(target_ghafeer_mac)
+                if remote_cam_ip not in motion_events:
+                    motion_events[remote_cam_ip] = []  # Initialize the list if it doesn't exist
+                motion_events[remote_cam_ip].append(current_timestamp)  # Store remote camera ip
+                print(f"{current_timestamp} - Calling Ghafeer mac - {target_ghafeer_mac} :Remote ghafeer camera - {remote_cam_ip}")
 
     except Exception as e:
         print(f"{current_timestamp} - Error handling motion: {e}")
