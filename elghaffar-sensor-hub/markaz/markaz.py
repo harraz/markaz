@@ -21,6 +21,7 @@ CAM_BY_SOURCE = {
     "5CCF7F44C358": "192.168.1.179",    # DAHROOG
 }
 
+BROKER = "localhost"  # MQTT broker address
 MOTION_THRESHOLD = 3  # Number of allowed motions within the cooldown period
 COOLDOWN_PERIOD = 30  # Cooldown period in seconds
 motion_count = defaultdict(lambda: {'count': 0, 'last_time': 0})
