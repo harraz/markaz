@@ -1,3 +1,4 @@
+import os
 import paho.mqtt.client as mqtt
 import time
 import threading
@@ -24,17 +25,25 @@ SOUND_ENABLED = config['sound_enabled']
 SOUND_PATH = config['sound_path']
 LOG_LEVEL = config['log_level']
 CAPTURE_SCRIPT = config.get('camera_capture_script', './capture_stream.sh')
+SOUND_FILES = config.get('sound_files', {})
 
 # Mapping: source ESP MAC -> list of (target location, target MAC, relay ON time)
 TRIGGERS = config['triggers']
 
 CAM_BY_SOURCE = config['cam_by_source']
 
-motion_count = defaultdict(lambda: {'count': 0, 'last_time': 0})
+motion_count = defaultdict(lambda: {'count': 0, 'last_time': 0.0})
 
 # Dictionary to collect motion events by camera IP
 motion_events = {}
 motion_events_lock = threading.Lock()
+
+# Track currently capturing cameras to avoid duplicate concurrent captures
+active_captures = set()
+active_captures_lock = threading.Lock()
+
+# Lock for pygame mixer operations (not thread-safe)
+sound_lock = threading.Lock()
 
 def on_message(client, userdata, msg):
     current_timestamp = (datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
@@ -93,15 +102,11 @@ def handle_motion(client, msg, payload, current_timestamp):
         
         threading.Thread(target=delayed_off, daemon=True).start()
 
-        # Play the appropriate sound
-        # if source_mac == '8CCE4EE74956':    # MARZOOK
-            # play_sound('alarm-no3-14864.mp3')
-        # elif source_mac == 'BCDDC2347051':  # DAHROOG
-            # play_sound('warning-alarm-loop-1-279206.mp3')
-        # elif source_mac == '4CEBD6ECEB83':  # SHANKAL
-            # play_sound('warning-alarm-loop-1-279206.mp3')
-        # else:
-            # play_sound('snd_fragment_retrievewav-14728.mp3')
+        # Play the appropriate sound (if enabled)
+        if SOUND_ENABLED:
+            sound_file = SOUND_FILES.get(source_mac, SOUND_FILES.get('default'))
+            if sound_file:
+                threading.Thread(target=play_sound, args=(sound_file,), daemon=True).start()
     
     # Collect motion events for this camera IP
     with motion_events_lock:
@@ -126,43 +131,66 @@ def process_motion_events(current_timestamp):
     """Processes collected motion events and starts camera captures."""
     with motion_events_lock:
         for cam_ip, events in list(motion_events.items()):
-            if events:  # If there are motion events for this camera IP
-                print(f"{current_timestamp} - Starting capture for camera {cam_ip} with {len(events)} motion events.")
-                threading.Thread(target=run_capture, args=(current_timestamp, cam_ip,), daemon=True).start()
-                # After starting capture, clear the events to avoid duplicate captures
-                motion_events[cam_ip] = []
+            if not events:
+                continue
+
+            with active_captures_lock:
+                if cam_ip in active_captures:
+                    print(f"{current_timestamp} - Capture already running for {cam_ip}, skipping")
+                    continue
+                active_captures.add(cam_ip)
+
+            print(f"{current_timestamp} - Starting capture for camera {cam_ip} with {len(events)} motion events.")
+            threading.Thread(target=run_capture, args=(current_timestamp, cam_ip,), daemon=True).start()
+            # After queueing capture, clear stored events
+            motion_events[cam_ip] = []
 
 def play_sound(file_name: str):
-    full_path = SOUND_PATH + file_name
+    full_path = os.path.join(SOUND_PATH, file_name)
 
-    # Stop the music if already playing
-    if pygame.mixer.music.get_busy():
-        time.sleep(3)
-        pygame.mixer.music.stop()
+    if not os.path.isfile(full_path):
+        print(f"Sound file not found: {full_path}. Skipping sound playback.")
+        return
 
-    pygame.mixer.music.load(full_path)
-    pygame.mixer.music.play()
+    try:
+        with sound_lock:
+            # Stop the music if already playing
+            if pygame.mixer.music.get_busy():
+                time.sleep(1)
+                pygame.mixer.music.stop()
+
+            pygame.mixer.music.load(full_path)
+            pygame.mixer.music.play()
+    except Exception as e:
+        print(f"Error playing sound {full_path}: {e}. Continuing without crash.")
+
 
 def run_capture(current_timestamp, cam_ip, duration=CAMERA_DURATION, retries=CAMERA_RETRIES, wait_time=CAMERA_WAIT_TIME):
-    script_path = CAPTURE_SCRIPT
-    command = ['bash', script_path, cam_ip, str(duration)]
+    try:
+        script_path = CAPTURE_SCRIPT
+        command = ['bash', script_path, cam_ip, str(duration)]
 
-    for attempt in range(retries):
-        try:
-            print(f"{datetime.now()} - Attempting to start camera capture (Attempt {attempt + 1})...")
-            result = subprocess.run(command, capture_output=True, text=True, check=True)
-            print(result)
-            #print("Video Output:", result.stdout)
-            #print("Script executed successfully.")
-            return  # Exit on success
+        for attempt in range(retries):
+            try:
+                print(f"{datetime.now()} - Attempting to start camera capture for {cam_ip} (Attempt {attempt + 1})...")
+                result = subprocess.run(command, capture_output=True, text=True, check=True)
+                print(result)
+                #print("Video Output:", result.stdout)
+                #print("Script executed successfully.")
+                return  # Exit on success
 
-        except subprocess.CalledProcessError as e:
-            print(f"Attempt {attempt + 1} failed with return code: {e.returncode}. Error Output: {e.stderr}")
-            if attempt < retries - 1:
-                print(f"{current_timestamp} - Retrying in {wait_time} seconds...")
-                time.sleep(wait_time)  # Wait before retrying
+            except subprocess.CalledProcessError as e:
+                print(f"Attempt {attempt + 1} failed with return code: {e.returncode}. Error Output: {e.stderr}")
+                if attempt < retries - 1:
+                    print(f"{current_timestamp} - Retrying in {wait_time} seconds...")
+                    time.sleep(wait_time)  # Wait before retrying
 
-    print(f"{current_timestamp} - All attempts to start camera capture have failed.")
+        print(f"{current_timestamp} - All attempts to start camera capture for {cam_ip} have failed.")
+
+    finally:
+        with active_captures_lock:
+            active_captures.discard(cam_ip)
+
 
 def main():
     

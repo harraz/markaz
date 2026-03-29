@@ -8,8 +8,13 @@
   "camera_retries": 3,
   "camera_wait_time": 2,
   "camera_capture_script": "./capture_stream.sh",
-  "sound_enabled": false,
+  "sound_enabled": true,
   "sound_path": "/home/harraz/Downloads/",
+  "sound_files": {
+    "8CCE4EE74956": "alarm-no3-14864.mp3",
+    "4CEBD6ECEB83": "warning-alarm-loop-1-279206.mp3",
+    "default": "snd_fragment_retrievewav-14728.mp3"
+  },
   "log_level": "INFO",
   "triggers": {
     "244CAB4F1201": [["DAHROOG", "5CCF7F44C358", 60]],
