@@ -7,6 +7,7 @@
   "camera_duration": 50,
   "camera_retries": 3,
   "camera_wait_time": 2,
+  "camera_capture_script": "./capture_stream.sh",
   "sound_enabled": false,
   "sound_path": "/home/harraz/Downloads/",
   "log_level": "INFO",

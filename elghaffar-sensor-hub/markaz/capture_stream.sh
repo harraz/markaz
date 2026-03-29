@@ -11,11 +11,13 @@ fi
 
 CAM_IP="$1"
 DUR="${2:-10}"
-OUTDIR="${OUTDIR:-/home/harraz/Videos}"
+OUTDIR="${OUTDIR:-$HOME/Videos}"
 
 mkdir -p "$OUTDIR"
 TS="$(date +%Y%m%d_%H%M%S)"
-OUT="$OUTDIR/esp32cam_${CAM_IP}_${TS}.avi"
+# sanitize CAM_IP for filename (replace non alphanum with _)
+SAFE_CAM_IP="$(echo "$CAM_IP" | sed -E 's/[^a-zA-Z0-9._-]/_/g')"
+OUT="$OUTDIR/esp32cam_${SAFE_CAM_IP}_${TS}.avi"
 
 CURL_TIMEOUT=5  # Timeout for curl commands
 FFMPEG_TIMEOUT="$((DUR + 1))"  # Timeout for ffmpeg command
@@ -34,9 +36,12 @@ ffmpeg -y -loglevel error \
 pid=$!
 ( sleep "$FFMPEG_TIMEOUT" && kill -HUP "$pid" ) 2>/dev/null &
 wait "$pid"
+status=$?
 
-if [[ $? -eq 0 ]]; then
+if [[ $status -eq 0 ]]; then
   echo "Saved: $OUT"
+  exit 0
 else
-  echo "ffmpeg command timed out" >&2
+  echo "ffmpeg command failed with status $status" >&2
+  exit $status
 fi

@@ -23,6 +23,7 @@ CAMERA_WAIT_TIME = config['camera_wait_time']
 SOUND_ENABLED = config['sound_enabled']
 SOUND_PATH = config['sound_path']
 LOG_LEVEL = config['log_level']
+CAPTURE_SCRIPT = config.get('camera_capture_script', './capture_stream.sh')
 
 # Mapping: source ESP MAC -> list of (target location, target MAC, relay ON time)
 TRIGGERS = config['triggers']
@@ -33,6 +34,7 @@ motion_count = defaultdict(lambda: {'count': 0, 'last_time': 0})
 
 # Dictionary to collect motion events by camera IP
 motion_events = {}
+motion_events_lock = threading.Lock()
 
 def on_message(client, userdata, msg):
     current_timestamp = (datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
@@ -102,19 +104,17 @@ def handle_motion(client, msg, payload, current_timestamp):
             # play_sound('snd_fragment_retrievewav-14728.mp3')
     
     # Collect motion events for this camera IP
-    if cam_ip:
-        if cam_ip not in motion_events:
-            motion_events[cam_ip] = []  # Initialize the list if it doesn't exist
-        motion_events[cam_ip].append(current_timestamp)  # Store the event
-    
-    #print(TRIGGERS[source_mac][0][1])
-    if source_mac:
-        target_ghafeer_mac=TRIGGERS[source_mac][0][1]
-        remote_cam_ip=CAM_BY_SOURCE.get(target_ghafeer_mac)
-        if remote_cam_ip not in motion_events:
-            motion_events[remote_cam_ip] = []  # Initialize the list if it doesn't exist
-        motion_events[remote_cam_ip].append(current_timestamp)  # Store remote camera ip
-        print(f"{current_timestamp} - Calling Ghafeer mac - {target_ghafeer_mac} :Remote ghafeer camera - {remote_cam_ip}")
+    with motion_events_lock:
+        if cam_ip:
+            motion_events.setdefault(cam_ip, []).append(current_timestamp)
+
+        #print(TRIGGERS[source_mac][0][1])
+        if source_mac:
+            target_ghafeer_mac = TRIGGERS[source_mac][0][1]
+            remote_cam_ip = CAM_BY_SOURCE.get(target_ghafeer_mac)
+            if remote_cam_ip:
+                motion_events.setdefault(remote_cam_ip, []).append(current_timestamp)
+            print(f"{current_timestamp} - Calling Ghafeer mac - {target_ghafeer_mac} :Remote ghafeer camera - {remote_cam_ip}")
 
 def handle_status(msg, payload, current_timestamp):
     # For status topics, just log the payload
@@ -124,12 +124,13 @@ def handle_status(msg, payload, current_timestamp):
 def process_motion_events(current_timestamp):
     
     """Processes collected motion events and starts camera captures."""
-    for cam_ip, events in motion_events.items():
-        if events:  # If there are motion events for this camera IP
-            print(f"{current_timestamp} - Starting capture for camera {cam_ip} with {len(events)} motion events.")
-            threading.Thread(target=run_capture, args=(current_timestamp, cam_ip,), daemon=True).start()
-            # After starting capture, clear the events to avoid duplicate captures
-            motion_events[cam_ip] = []
+    with motion_events_lock:
+        for cam_ip, events in list(motion_events.items()):
+            if events:  # If there are motion events for this camera IP
+                print(f"{current_timestamp} - Starting capture for camera {cam_ip} with {len(events)} motion events.")
+                threading.Thread(target=run_capture, args=(current_timestamp, cam_ip,), daemon=True).start()
+                # After starting capture, clear the events to avoid duplicate captures
+                motion_events[cam_ip] = []
 
 def play_sound(file_name: str):
     full_path = SOUND_PATH + file_name
@@ -143,7 +144,7 @@ def play_sound(file_name: str):
     pygame.mixer.music.play()
 
 def run_capture(current_timestamp, cam_ip, duration=CAMERA_DURATION, retries=CAMERA_RETRIES, wait_time=CAMERA_WAIT_TIME):
-    script_path = "./capture_stream.sh"
+    script_path = CAPTURE_SCRIPT
     command = ['bash', script_path, cam_ip, str(duration)]
 
     for attempt in range(retries):
