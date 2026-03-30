@@ -32,6 +32,12 @@ TRIGGERS = config['triggers']
 
 CAM_BY_SOURCE = config['cam_by_source']
 
+# Video cleanup configuration
+VIDEO_CLEANUP = config.get('video_cleanup', {})
+VIDEO_SOURCE_PATTERN = VIDEO_CLEANUP.get('source_pattern', '/home/harraz/Videos/*.avi')
+VIDEO_DEST_DIR = VIDEO_CLEANUP.get('dest_dir', '~/network-share/disk1/share/motion_videos/')
+VIDEO_INTERVAL_HOURS = VIDEO_CLEANUP.get('interval_hours', 6)
+
 motion_count = defaultdict(lambda: {'count': 0, 'last_time': 0.0})
 
 # Dictionary to collect motion events by camera IP
@@ -165,6 +171,38 @@ def play_sound(file_name: str):
         print(f"Error playing sound {full_path}: {e}. Continuing without crash.")
 
 
+def cleanup_videos():
+    source_pattern = VIDEO_SOURCE_PATTERN
+    dest_dir = os.path.expanduser(VIDEO_DEST_DIR)
+
+    print(f"{datetime.now()} - Starting video cleanup...")
+
+    try:
+        # Rsync the files
+        print(f"{datetime.now()} - Syncing files to {dest_dir}...")
+        subprocess.run(['rsync', '-av', '--no-perms', '--no-times', source_pattern, dest_dir], check=True)
+        print(f"{datetime.now()} - Rsync completed successfully.")
+
+        # Remove local files
+        print(f"{datetime.now()} - Removing local files...")
+        subprocess.run(['rm', source_pattern], check=True)
+        print(f"{datetime.now()} - Video cleanup completed successfully.")
+
+    except subprocess.CalledProcessError as e:
+        print(f"{datetime.now()} - Error during video cleanup: Command '{e.cmd}' failed with return code {e.returncode}. Stderr: {e.stderr}")
+    except Exception as e:
+        print(f"{datetime.now()} - Unexpected error during video cleanup: {e}")
+
+
+def cleanup_loop():
+    while True:
+        try:
+            time.sleep(VIDEO_INTERVAL_HOURS * 3600)  # Sleep for configured hours
+            cleanup_videos()
+        except Exception as e:
+            print(f"{datetime.now()} - Error in cleanup loop: {e}. Continuing...")
+
+
 def run_capture(current_timestamp, cam_ip, duration=CAMERA_DURATION, retries=CAMERA_RETRIES, wait_time=CAMERA_WAIT_TIME):
     try:
         script_path = CAPTURE_SCRIPT
@@ -207,6 +245,9 @@ def main():
         print(f"Subscribed to: {topic}")
     
     pygame.mixer.init()
+
+    # Start video cleanup thread
+    threading.Thread(target=cleanup_loop, daemon=True).start()
 
     while True:
         client.loop()  # Handle MQTT messages

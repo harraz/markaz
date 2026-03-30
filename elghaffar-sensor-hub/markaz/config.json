@@ -23,5 +23,10 @@
   },
   "cam_by_source": {
     "5CCF7F44C358": "192.168.1.179"
+  },
+  "video_cleanup": {
+    "source_pattern": "/home/harraz/Videos/*.avi",
+    "dest_dir": "~/network-share/disk1/share/motion_videos/",
+    "interval_hours": 6
   }
 }
