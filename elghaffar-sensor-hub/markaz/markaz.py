@@ -1,4 +1,5 @@
 import os
+import glob
 import paho.mqtt.client as mqtt
 import time
 import threading
@@ -174,18 +175,33 @@ def play_sound(file_name: str):
 def cleanup_videos():
     source_pattern = VIDEO_SOURCE_PATTERN
     dest_dir = os.path.expanduser(VIDEO_DEST_DIR)
+    # subprocess.run([...]) does not expand shell globs like "*.avi", so
+    # resolve the configured pattern to concrete file paths before calling rsync.
+    source_files = sorted(glob.glob(source_pattern))
 
     print(f"{datetime.now()} - Starting video cleanup...")
 
     try:
+        if not source_files:
+            print(f"{datetime.now()} - No video files matched {source_pattern}. Skipping cleanup.")
+            return
+
         # Rsync the files
         print(f"{datetime.now()} - Syncing files to {dest_dir}...")
-        subprocess.run(['rsync', '-av', '--no-perms', '--no-times', source_pattern, dest_dir], check=True)
+        subprocess.run(
+            ['rsync', '-av', '--no-perms', '--no-times', *source_files, dest_dir],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
         print(f"{datetime.now()} - Rsync completed successfully.")
 
         # Remove local files
         print(f"{datetime.now()} - Removing local files...")
-        subprocess.run(['rm', source_pattern], check=True)
+        # Delete the exact files that were synced instead of passing the glob
+        # pattern to an external rm command.
+        for video_file in source_files:
+            os.remove(video_file)
         print(f"{datetime.now()} - Video cleanup completed successfully.")
 
     except subprocess.CalledProcessError as e:
