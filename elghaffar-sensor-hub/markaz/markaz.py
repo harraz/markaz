@@ -98,15 +98,15 @@ def handle_motion(client, msg, payload, current_timestamp):
 
     for target_location, target_mac, delay in TRIGGERS[source_mac]:
         relay_cmd_topic = f"home/{target_location}/{target_mac}/cmd"
-        print(f"{current_timestamp} - [Relay] {msg.topic} Sending REL_ON to {relay_cmd_topic}")
-        client.publish(relay_cmd_topic, "REL_ON")
+        print(f"{current_timestamp} - [Relay] {msg.topic} Sending [markaz] REL_ON to {relay_cmd_topic}")
+        client.publish(relay_cmd_topic, "[markaz] REL_ON")
 
-        def delayed_off(topic=relay_cmd_topic, delay=delay):
-            time.sleep(delay)
-            print(f"{current_timestamp} - [Relay] {msg.topic} Sending REL_OFF to {topic}")
-            client.publish(topic, "REL_OFF")
-        
-        threading.Thread(target=delayed_off, daemon=True).start()
+        def delayed_off(topic=relay_cmd_topic, motion_topic=msg.topic):
+            off_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            print(f"{off_timestamp} - [Relay] {motion_topic} Sending [markaz] REL_OFF to {topic}")
+            client.publish(topic, "[markaz] REL_OFF")
+
+        threading.Thread(target=lambda: (time.sleep(delay), delayed_off()), daemon=True).start()
 
         # Play the appropriate sound (if enabled)
         if SOUND_ENABLED:
@@ -132,13 +132,14 @@ def handle_status(msg, payload, current_timestamp):
     print(f"{current_timestamp} - [Status] {msg.topic}: {payload}")
     # You can add more logic here, e.g., store status in a dict or trigger actions
 
-def process_motion_events(current_timestamp):
-    
+def process_motion_events():
     """Processes collected motion events and starts camera captures."""
     with motion_events_lock:
         for cam_ip, events in list(motion_events.items()):
             if not events:
                 continue
+
+            current_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
             with active_captures_lock:
                 if cam_ip in active_captures:
@@ -147,7 +148,7 @@ def process_motion_events(current_timestamp):
                 active_captures.add(cam_ip)
 
             print(f"{current_timestamp} - Starting capture for camera {cam_ip} with {len(events)} motion events.")
-            threading.Thread(target=run_capture, args=(current_timestamp, cam_ip,), daemon=True).start()
+            threading.Thread(target=run_capture, args=(cam_ip,), daemon=True).start()
             # After queueing capture, clear stored events
             motion_events[cam_ip] = []
 
@@ -203,7 +204,7 @@ def cleanup_loop():
             print(f"{datetime.now()} - Error in cleanup loop: {e}. Continuing...")
 
 
-def run_capture(current_timestamp, cam_ip, duration=CAMERA_DURATION, retries=CAMERA_RETRIES, wait_time=CAMERA_WAIT_TIME):
+def run_capture(cam_ip, duration=CAMERA_DURATION, retries=CAMERA_RETRIES, wait_time=CAMERA_WAIT_TIME):
     try:
         script_path = CAPTURE_SCRIPT
         command = ['bash', script_path, cam_ip, str(duration)]
@@ -220,10 +221,10 @@ def run_capture(current_timestamp, cam_ip, duration=CAMERA_DURATION, retries=CAM
             except subprocess.CalledProcessError as e:
                 print(f"Attempt {attempt + 1} failed with return code: {e.returncode}. Error Output: {e.stderr}")
                 if attempt < retries - 1:
-                    print(f"{current_timestamp} - Retrying in {wait_time} seconds...")
+                    print(f"{datetime.now()} - Retrying in {wait_time} seconds...")
                     time.sleep(wait_time)  # Wait before retrying
 
-        print(f"{current_timestamp} - All attempts to start camera capture for {cam_ip} have failed.")
+        print(f"{datetime.now()} - All attempts to start camera capture for {cam_ip} have failed.")
 
     finally:
         with active_captures_lock:
@@ -231,9 +232,6 @@ def run_capture(current_timestamp, cam_ip, duration=CAMERA_DURATION, retries=CAM
 
 
 def main():
-    
-    current_timestamp = (datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-
     client = mqtt.Client()
     client.on_message = on_message
 
@@ -251,7 +249,7 @@ def main():
 
     while True:
         client.loop()  # Handle MQTT messages
-        process_motion_events(current_timestamp)  # Process and handle motion events
+        process_motion_events()  # Process and handle motion events
 
 if __name__ == "__main__":
     main()
