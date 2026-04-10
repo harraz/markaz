@@ -1,4 +1,5 @@
 import os
+import glob
 import paho.mqtt.client as mqtt
 import time
 import threading
@@ -37,6 +38,7 @@ VIDEO_CLEANUP = config.get('video_cleanup', {})
 VIDEO_SOURCE_PATTERN = VIDEO_CLEANUP.get('source_pattern', '/home/harraz/Videos/*.avi')
 VIDEO_DEST_DIR = VIDEO_CLEANUP.get('dest_dir', '~/network-share/disk1/share/motion_videos/')
 VIDEO_INTERVAL_HOURS = VIDEO_CLEANUP.get('interval_hours', 6)
+VIDEO_LOG_FILE = os.path.expanduser(VIDEO_CLEANUP.get('log_file', '~/video_cleanup_rsync.log'))
 
 motion_count = defaultdict(lambda: {'count': 0, 'last_time': 0.0})
 
@@ -175,18 +177,39 @@ def play_sound(file_name: str):
 def cleanup_videos():
     source_pattern = VIDEO_SOURCE_PATTERN
     dest_dir = os.path.expanduser(VIDEO_DEST_DIR)
+    # subprocess.run([...]) does not expand shell globs like "*.avi", so
+    # resolve the configured pattern to concrete file paths before calling rsync.
+    source_files = sorted(glob.glob(source_pattern))
 
     print(f"{datetime.now()} - Starting video cleanup...")
 
     try:
+        if not source_files:
+            print(f"{datetime.now()} - No video files matched {source_pattern}. Skipping cleanup.")
+            return
+
         # Rsync the files
         print(f"{datetime.now()} - Syncing files to {dest_dir}...")
-        subprocess.run(['rsync', '-av', '--no-perms', '--no-times', source_pattern, dest_dir], check=True)
+        with open(VIDEO_LOG_FILE, 'a', encoding='utf-8') as rsync_log:
+            rsync_log.write(f"{datetime.now()} - Starting rsync to {dest_dir}\n")
+            rsync_log.flush()
+            subprocess.run(
+                ['rsync', '-av', '--no-perms', '--no-times', *source_files, dest_dir],
+                check=True,
+                stdout=rsync_log,
+                stderr=rsync_log,
+                # Run rsync in its own session so it is less likely to be interrupted
+                # by a SIGHUP when the parent process loses its controlling terminal.
+                start_new_session=True,
+            )
         print(f"{datetime.now()} - Rsync completed successfully.")
 
         # Remove local files
         print(f"{datetime.now()} - Removing local files...")
-        subprocess.run(['rm', source_pattern], check=True)
+        # Delete the exact files that were synced instead of passing the glob
+        # pattern to an external rm command.
+        for video_file in source_files:
+            os.remove(video_file)
         print(f"{datetime.now()} - Video cleanup completed successfully.")
 
     except subprocess.CalledProcessError as e:
@@ -244,8 +267,9 @@ def main():
     
     pygame.mixer.init()
 
-    # Start video cleanup thread
-    threading.Thread(target=cleanup_loop, daemon=True).start()
+    # Keep cleanup on a non-daemon thread so the process does not tear it down
+    # in the middle of a long-running rsync.
+    threading.Thread(target=cleanup_loop, daemon=False).start()
 
     while True:
         client.loop()  # Handle MQTT messages
