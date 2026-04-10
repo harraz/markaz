@@ -53,12 +53,15 @@ active_captures_lock = threading.Lock()
 # Lock for pygame mixer operations (not thread-safe)
 sound_lock = threading.Lock()
 
+def log_markaz(message: str):
+    print(f"[markaz] {message}")
+
 def on_message(client, userdata, msg):
     current_timestamp = (datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
     try:
         payload = msg.payload.decode()
-        print(f"{current_timestamp} - [Message] {msg.topic}: {payload}")
+        log_markaz(f"{current_timestamp} - [Message] {msg.topic}: {payload}")
 
         if msg.topic.endswith('/motion'):
             # Handle motion events
@@ -68,10 +71,10 @@ def on_message(client, userdata, msg):
             handle_status(msg, payload, current_timestamp)
         else:
             # Handle other topics if needed
-            print(f"{current_timestamp} - [Unknown] Unhandled topic: {msg.topic}")
+            log_markaz(f"{current_timestamp} - [Unknown] Unhandled topic: {msg.topic}")
 
     except Exception as e:
-        print(f"{current_timestamp} - Error handling message: {e}")
+        log_markaz(f"{current_timestamp} - Error handling message: {e}")
 
 def handle_motion(client, msg, payload, current_timestamp):
     data = json.loads(payload)
@@ -80,7 +83,7 @@ def handle_motion(client, msg, payload, current_timestamp):
     current_time = time.time()  # Get the current time in seconds
 
     if source_mac not in TRIGGERS:
-        print(f"{current_timestamp} - No relay trigger configured for source MAC: {source_mac}")
+        log_markaz(f"{current_timestamp} - No relay trigger configured for source MAC: {source_mac}")
         return  # Return if no triggers are found
 
     # Throttle logic
@@ -91,7 +94,7 @@ def handle_motion(client, msg, payload, current_timestamp):
     if current_time - motion_count[source_mac]['last_time'] < COOLDOWN_PERIOD:
         motion_count[source_mac]['count'] += 1
         if motion_count[source_mac]['count'] > MOTION_THRESHOLD:
-            print(f"{current_timestamp} - [Throttled] Motion from {source_mac} ignored due to cooldown.")
+            log_markaz(f"{current_timestamp} - [Throttled] Motion from {source_mac} ignored due to cooldown.")
             return  # Ignore this motion event
     else:
         # Reset count and last_time if cooldown period has passed
@@ -100,12 +103,12 @@ def handle_motion(client, msg, payload, current_timestamp):
 
     for target_location, target_mac, delay in TRIGGERS[source_mac]:
         relay_cmd_topic = f"home/{target_location}/{target_mac}/cmd"
-        print(f"{current_timestamp} - [Relay] {msg.topic} Sending [markaz] REL_ON to {relay_cmd_topic}")
+        log_markaz(f"{current_timestamp} - [Relay] {msg.topic} Sending [markaz] REL_ON to {relay_cmd_topic}")
         client.publish(relay_cmd_topic, "[markaz] REL_ON")
 
         def delayed_off(topic=relay_cmd_topic, motion_topic=msg.topic):
             off_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            print(f"{off_timestamp} - [Relay] {motion_topic} Sending [markaz] REL_OFF to {topic}")
+            log_markaz(f"{off_timestamp} - [Relay] {motion_topic} Sending [markaz] REL_OFF to {topic}")
             client.publish(topic, "[markaz] REL_OFF")
 
         threading.Thread(target=lambda: (time.sleep(delay), delayed_off()), daemon=True).start()
@@ -127,11 +130,11 @@ def handle_motion(client, msg, payload, current_timestamp):
             remote_cam_ip = CAM_BY_SOURCE.get(target_ghafeer_mac)
             if remote_cam_ip:
                 motion_events.setdefault(remote_cam_ip, []).append(current_timestamp)
-            print(f"{current_timestamp} - Calling Ghafeer mac - {target_ghafeer_mac} :Remote ghafeer camera - {remote_cam_ip}")
+            log_markaz(f"{current_timestamp} - Calling Ghafeer mac - {target_ghafeer_mac} :Remote ghafeer camera - {remote_cam_ip}")
 
 def handle_status(msg, payload, current_timestamp):
     # For status topics, just log the payload
-    print(f"{current_timestamp} - [Status] {msg.topic}: {payload}")
+    log_markaz(f"{current_timestamp} - [Status] {msg.topic}: {payload}")
     # You can add more logic here, e.g., store status in a dict or trigger actions
 
 def process_motion_events():
@@ -145,11 +148,11 @@ def process_motion_events():
 
             with active_captures_lock:
                 if cam_ip in active_captures:
-                    print(f"{current_timestamp} - Capture already running for {cam_ip}, skipping")
+                    log_markaz(f"{current_timestamp} - Capture already running for {cam_ip}, skipping")
                     continue
                 active_captures.add(cam_ip)
 
-            print(f"{current_timestamp} - Starting capture for camera {cam_ip} with {len(events)} motion events.")
+            log_markaz(f"{current_timestamp} - Starting capture for camera {cam_ip} with {len(events)} motion events.")
             threading.Thread(target=run_capture, args=(cam_ip,), daemon=True).start()
             # After queueing capture, clear stored events
             motion_events[cam_ip] = []
@@ -158,7 +161,7 @@ def play_sound(file_name: str):
     full_path = os.path.join(SOUND_PATH, file_name)
 
     if not os.path.isfile(full_path):
-        print(f"Sound file not found: {full_path}. Skipping sound playback.")
+        log_markaz(f"Sound file not found: {full_path}. Skipping sound playback.")
         return
 
     try:
@@ -171,7 +174,7 @@ def play_sound(file_name: str):
             pygame.mixer.music.load(full_path)
             pygame.mixer.music.play()
     except Exception as e:
-        print(f"Error playing sound {full_path}: {e}. Continuing without crash.")
+        log_markaz(f"Error playing sound {full_path}: {e}. Continuing without crash.")
 
 
 def cleanup_videos():
@@ -181,15 +184,15 @@ def cleanup_videos():
     # resolve the configured pattern to concrete file paths before calling rsync.
     source_files = sorted(glob.glob(source_pattern))
 
-    print(f"{datetime.now()} - Starting video cleanup...")
+    log_markaz(f"{datetime.now()} - Starting video cleanup...")
 
     try:
         if not source_files:
-            print(f"{datetime.now()} - No video files matched {source_pattern}. Skipping cleanup.")
+            log_markaz(f"{datetime.now()} - No video files matched {source_pattern}. Skipping cleanup.")
             return
 
         # Rsync the files
-        print(f"{datetime.now()} - Syncing files to {dest_dir}...")
+        log_markaz(f"{datetime.now()} - Syncing files to {dest_dir}...")
         with open(VIDEO_LOG_FILE, 'a', encoding='utf-8') as rsync_log:
             rsync_log.write(f"{datetime.now()} - Starting rsync to {dest_dir}\n")
             rsync_log.flush()
@@ -202,20 +205,20 @@ def cleanup_videos():
                 # by a SIGHUP when the parent process loses its controlling terminal.
                 start_new_session=True,
             )
-        print(f"{datetime.now()} - Rsync completed successfully.")
+        log_markaz(f"{datetime.now()} - Rsync completed successfully.")
 
         # Remove local files
-        print(f"{datetime.now()} - Removing local files...")
+        log_markaz(f"{datetime.now()} - Removing local files...")
         # Delete the exact files that were synced instead of passing the glob
         # pattern to an external rm command.
         for video_file in source_files:
             os.remove(video_file)
-        print(f"{datetime.now()} - Video cleanup completed successfully.")
+        log_markaz(f"{datetime.now()} - Video cleanup completed successfully.")
 
     except subprocess.CalledProcessError as e:
-        print(f"{datetime.now()} - Error during video cleanup: Command '{e.cmd}' failed with return code {e.returncode}. Stderr: {e.stderr}")
+        log_markaz(f"{datetime.now()} - Error during video cleanup: Command '{e.cmd}' failed with return code {e.returncode}. Stderr: {e.stderr}")
     except Exception as e:
-        print(f"{datetime.now()} - Unexpected error during video cleanup: {e}")
+        log_markaz(f"{datetime.now()} - Unexpected error during video cleanup: {e}")
 
 
 def cleanup_loop():
@@ -224,7 +227,7 @@ def cleanup_loop():
             time.sleep(VIDEO_INTERVAL_HOURS * 3600)  # Sleep for configured hours
             cleanup_videos()
         except Exception as e:
-            print(f"{datetime.now()} - Error in cleanup loop: {e}. Continuing...")
+            log_markaz(f"{datetime.now()} - Error in cleanup loop: {e}. Continuing...")
 
 
 def run_capture(cam_ip, duration=CAMERA_DURATION, retries=CAMERA_RETRIES, wait_time=CAMERA_WAIT_TIME):
@@ -234,20 +237,20 @@ def run_capture(cam_ip, duration=CAMERA_DURATION, retries=CAMERA_RETRIES, wait_t
 
         for attempt in range(retries):
             try:
-                print(f"{datetime.now()} - Attempting to start camera capture for {cam_ip} (Attempt {attempt + 1})...")
+                log_markaz(f"{datetime.now()} - Attempting to start camera capture for {cam_ip} (Attempt {attempt + 1})...")
                 result = subprocess.run(command, capture_output=True, text=True, check=True)
-                print(result)
+                log_markaz(str(result))
                 #print("Video Output:", result.stdout)
                 #print("Script executed successfully.")
                 return  # Exit on success
 
             except subprocess.CalledProcessError as e:
-                print(f"Attempt {attempt + 1} failed with return code: {e.returncode}. Error Output: {e.stderr}")
+                log_markaz(f"Attempt {attempt + 1} failed with return code: {e.returncode}. Error Output: {e.stderr}")
                 if attempt < retries - 1:
-                    print(f"{datetime.now()} - Retrying in {wait_time} seconds...")
+                    log_markaz(f"{datetime.now()} - Retrying in {wait_time} seconds...")
                     time.sleep(wait_time)  # Wait before retrying
 
-        print(f"{datetime.now()} - All attempts to start camera capture for {cam_ip} have failed.")
+        log_markaz(f"{datetime.now()} - All attempts to start camera capture for {cam_ip} have failed.")
 
     finally:
         with active_captures_lock:
@@ -258,12 +261,12 @@ def main():
     client = mqtt.Client()
     client.on_message = on_message
 
-    print(f"Connecting to MQTT broker at {BROKER}:{BROKER_PORT}...")
+    log_markaz(f"Connecting to MQTT broker at {BROKER}:{BROKER_PORT}...")
     client.connect(BROKER, BROKER_PORT, 60)
 
     for topic in TOPICS:
         client.subscribe(topic)
-        print(f"Subscribed to: {topic}")
+        log_markaz(f"Subscribed to: {topic}")
     
     pygame.mixer.init()
 
