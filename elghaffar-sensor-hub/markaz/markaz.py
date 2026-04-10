@@ -103,13 +103,13 @@ def handle_motion(client, msg, payload, current_timestamp):
 
     for target_location, target_mac, delay in TRIGGERS[source_mac]:
         relay_cmd_topic = f"home/{target_location}/{target_mac}/cmd"
-        log_markaz(f"{current_timestamp} - [Relay] {msg.topic} Sending [markaz] REL_ON to {relay_cmd_topic}")
-        client.publish(relay_cmd_topic, "[markaz] REL_ON")
+        log_markaz(f"{current_timestamp} - [Relay] {msg.topic} Sending REL_ON to {relay_cmd_topic}")
+        client.publish(relay_cmd_topic, "REL_ON")
 
         def delayed_off(topic=relay_cmd_topic, motion_topic=msg.topic):
             off_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            log_markaz(f"{off_timestamp} - [Relay] {motion_topic} Sending [markaz] REL_OFF to {topic}")
-            client.publish(topic, "[markaz] REL_OFF")
+            log_markaz(f"{off_timestamp} - [Relay] {motion_topic} Sending REL_OFF to {topic}")
+            client.publish(topic, "REL_OFF")
 
         threading.Thread(target=lambda: (time.sleep(delay), delayed_off()), daemon=True).start()
 
