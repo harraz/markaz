@@ -42,9 +42,12 @@ curl -s --max-time "$CURL_TIMEOUT" "http://$CAM_IP/control?var=framesize&val=8" 
 # Control command to set quality with timeout
 curl -s --max-time "$CURL_TIMEOUT" "http://$CAM_IP/control?var=quality&val=5" >/dev/null 2>&1 || true
 
-set +e
 # Run ffmpeg as a tracked child so cleanup can stop this exact process if
 # Markaz terminates the script after its outer safety timeout.
+#
+# Disable "exit on error" around wait so the script can inspect ffmpeg's exit
+# status and print a clear error message instead of exiting immediately.
+set +e
 ffmpeg -y -loglevel error \
   -i "http://${CAM_IP}:81/stream" \
   -t "$DUR" \

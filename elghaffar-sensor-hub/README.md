@@ -98,6 +98,15 @@ Camera captures are bounded by Markaz with a safety timeout so a stuck `ffmpeg` 
 
 For deep-sleep camera boards, `camera_start_delay` can delay capture startup for a few seconds after `REL_ON`. This gives the ESP32-CAM HTTP server time to begin listening before `ffmpeg` connects.
 
+Relevant dispatcher settings in `markaz/config.json`:
+
+| Setting | Purpose |
+|---------|---------|
+| `camera_duration` | Requested ffmpeg recording length in seconds. Keep this shorter than the board's awake window. |
+| `camera_start_delay` | Seconds to wait after `REL_ON` before starting ffmpeg, useful when the camera HTTP server needs time to boot. |
+| `camera_retries` | Number of capture attempts. Deep-sleep cameras usually benefit from few quick attempts rather than long retries after the awake window is gone. |
+| `camera_output_dir` | Local directory passed to `capture_stream.sh` as `OUTDIR`, so output does not depend on the service user's `HOME`. |
+
 ---
 
 ## 🧪 MQTT Command Reference
