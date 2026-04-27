@@ -96,6 +96,8 @@ The dispatcher keeps one active `REL_OFF` timer version per relay command topic.
 
 Camera captures are bounded by Markaz with a safety timeout so a stuck `ffmpeg` process cannot keep a camera slot busy forever. If the capture process times out but a non-empty AVI was created during that attempt, Markaz logs the saved file and releases the camera slot. The capture script tracks only the `ffmpeg` child it starts and stops that process on exit instead of signaling the whole process group.
 
+For deep-sleep camera boards, `camera_start_delay` can delay capture startup for a few seconds after `REL_ON`. This gives the ESP32-CAM HTTP server time to begin listening before `ffmpeg` connects.
+
 ---
 
 ## 🧪 MQTT Command Reference

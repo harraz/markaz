@@ -21,6 +21,7 @@ COOLDOWN_PERIOD = config['cooldown_period']
 CAMERA_DURATION = config['camera_duration']
 CAMERA_RETRIES = config['camera_retries']
 CAMERA_WAIT_TIME = config['camera_wait_time']
+CAMERA_START_DELAY = config.get('camera_start_delay', 0)
 SOUND_ENABLED = config['sound_enabled']
 SOUND_PATH = config['sound_path']
 LOG_LEVEL = config['log_level']
@@ -293,7 +294,7 @@ def find_capture_file_created_after(cam_ip, started_at):
     return max(candidates, key=os.path.getmtime)
 
 
-def run_capture(cam_ip, duration=CAMERA_DURATION, retries=CAMERA_RETRIES, wait_time=CAMERA_WAIT_TIME):
+def run_capture(cam_ip, duration=CAMERA_DURATION, retries=CAMERA_RETRIES, wait_time=CAMERA_WAIT_TIME, start_delay=CAMERA_START_DELAY):
     try:
         script_path = CAPTURE_SCRIPT
         command = ['bash', script_path, cam_ip, str(duration)]
@@ -304,6 +305,10 @@ def run_capture(cam_ip, duration=CAMERA_DURATION, retries=CAMERA_RETRIES, wait_t
         # Keep this longer than the requested recording time so ffmpeg has room
         # to finalize the AVI, but still guarantee active_captures is released.
         capture_timeout = duration + 20
+
+        if start_delay > 0:
+            log_markaz(f"{datetime.now()} - Waiting {start_delay} seconds before camera capture for {cam_ip}.")
+            time.sleep(start_delay)
 
         for attempt in range(retries):
             try:
