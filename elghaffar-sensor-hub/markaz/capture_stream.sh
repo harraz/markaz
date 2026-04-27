@@ -1,8 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-trap "exit" INT TERM ERR
-trap "kill 0" EXIT
+ffmpeg_pid=""
+timeout_pid=""
+
+cleanup() {
+  # Only stop the child processes started by this script. Do not use "kill 0",
+  # because that can signal unrelated processes in the same process group.
+  if [[ -n "$timeout_pid" ]] && kill -0 "$timeout_pid" 2>/dev/null; then
+    kill "$timeout_pid" 2>/dev/null || true
+  fi
+
+  if [[ -n "$ffmpeg_pid" ]] && kill -0 "$ffmpeg_pid" 2>/dev/null; then
+    kill "$ffmpeg_pid" 2>/dev/null || true
+  fi
+}
+
+on_signal() {
+  cleanup
+  exit 130
+}
+
+trap cleanup EXIT
+trap on_signal INT TERM
 
 if [ $# -lt 1 ]; then
   echo "Usage: $0 <CAM_IP> [DURATION_SEC]" >&2
@@ -33,10 +53,26 @@ ffmpeg -y -loglevel error \
   -t "$DUR" \
   -c:v copy "$OUT" &
 
-pid=$!
-( sleep "$FFMPEG_TIMEOUT" && kill -HUP "$pid" ) 2>/dev/null &
-wait "$pid"
+ffmpeg_pid=$!
+
+# Start a small timeout helper. If ffmpeg runs longer than expected, ask only
+# that ffmpeg process to stop cleanly.
+( sleep "$FFMPEG_TIMEOUT" && kill "$ffmpeg_pid" 2>/dev/null ) &
+timeout_pid=$!
+
+# ffmpeg can return a non-zero status if the stream drops or the timeout helper
+# stops it. Temporarily disable "exit on error" so we can inspect that status
+# and print a useful message below.
+set +e
+wait "$ffmpeg_pid"
 status=$?
+set -e
+
+# ffmpeg finished before the timeout helper fired, so stop the helper too.
+if kill -0 "$timeout_pid" 2>/dev/null; then
+  kill "$timeout_pid" 2>/dev/null || true
+  wait "$timeout_pid" 2>/dev/null || true
+fi
 
 if [[ $status -eq 0 ]]; then
   echo "Saved: $OUT"

@@ -42,6 +42,11 @@ VIDEO_LOG_FILE = os.path.expanduser(VIDEO_CLEANUP.get('log_file', '~/video_clean
 
 motion_count = defaultdict(lambda: {'count': 0, 'last_time': 0.0})
 
+# Track the current REL_OFF timer version per relay command topic. This lets
+# new motion extend the relay window without an older timer turning it off early.
+relay_off_timer_versions = defaultdict(int)
+relay_off_timer_lock = threading.Lock()
+
 # Dictionary to collect motion events by camera IP
 motion_events = {}
 motion_events_lock = threading.Lock()
@@ -106,12 +111,30 @@ def handle_motion(client, msg, payload, current_timestamp):
         log_markaz(f"{current_timestamp} - [Relay] {msg.topic} Sending REL_ON to {relay_cmd_topic}")
         client.publish(relay_cmd_topic, "REL_ON")
 
-        def delayed_off(topic=relay_cmd_topic, motion_topic=msg.topic):
+        relay_off_timer_lock.acquire()
+        try:
+            relay_off_timer_versions[relay_cmd_topic] += 1
+            off_timer_version = relay_off_timer_versions[relay_cmd_topic]
+        finally:
+            relay_off_timer_lock.release()
+
+        def delayed_off(topic=relay_cmd_topic, motion_topic=msg.topic, timer_version=off_timer_version):
+            time.sleep(delay)
+
+            relay_off_timer_lock.acquire()
+            try:
+                if relay_off_timer_versions[topic] != timer_version:
+                    off_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    log_markaz(f"{off_timestamp} - [Relay] {motion_topic} Skipping stale REL_OFF to {topic}")
+                    return
+            finally:
+                relay_off_timer_lock.release()
+
             off_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             log_markaz(f"{off_timestamp} - [Relay] {motion_topic} Sending REL_OFF to {topic}")
             client.publish(topic, "REL_OFF")
 
-        threading.Thread(target=lambda: (time.sleep(delay), delayed_off()), daemon=True).start()
+        threading.Thread(target=delayed_off, daemon=True).start()
 
         # Play the appropriate sound (if enabled)
         if SOUND_ENABLED:
@@ -268,7 +291,8 @@ def main():
         client.subscribe(topic)
         log_markaz(f"Subscribed to: {topic}")
     
-    pygame.mixer.init()
+    if SOUND_ENABLED:
+        pygame.mixer.init()
 
     # Keep cleanup on a non-daemon thread so the process does not tear it down
     # in the middle of a long-running rsync.

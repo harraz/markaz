@@ -84,11 +84,17 @@ Example dispatcher behavior:
 - Extracts: `GHAFEER_NAME` and `MAC` from the topic
 - Determines which action device(s) to activate
 - Sends `REL_ON` to `home/{ActionName}/{MAC}/cmd`
-- Waits (e.g., 15 seconds), then sends `REL_OFF`
+- Schedules `REL_OFF` for the configured trigger delay
 
 This enables centralized control, zoning logic, and flexible future integrations such as AI filtering or event scheduling.
 
 > ⚙️ MQTT broker and dispatcher both run on a local Raspberry Pi, allowing full control of local automation without the cloud.
+
+### Dispatcher Reliability Notes
+
+The dispatcher keeps one active `REL_OFF` timer version per relay command topic. If new accepted motion arrives before the old timer expires, the new motion sends `REL_ON` again and extends the relay window. When the older timer wakes up, it sees that it is stale, logs `Skipping stale REL_OFF`, and does not turn the relay off early.
+
+The camera capture script also tracks only the child processes it starts. On exit or shutdown it stops its own `ffmpeg` and timeout helper processes instead of signaling the whole process group.
 
 ---
 
