@@ -107,6 +107,14 @@ Relevant dispatcher settings in `markaz/config.json`:
 | `camera_retries` | Number of capture attempts. Deep-sleep cameras usually benefit from few quick attempts rather than long retries after the awake window is gone. |
 | `camera_output_dir` | Local directory passed to `capture_stream.sh` as `OUTDIR`, so output does not depend on the service user's `HOME`. |
 
+When increasing video length for a deep-sleep camera, increase the firmware awake/relay window first, then increase `camera_duration`. Keep this relationship true:
+
+```
+camera_start_delay + camera_duration + safety_margin < post_trigger_awake_window
+```
+
+A practical safety margin is about 5 seconds. For example, if firmware reports `post_trigger_awake_window_ms: 35000` and `camera_start_delay` is 6 seconds, a safe `camera_duration` is around 20-24 seconds. For longer videos, raise the firmware awake window first, for example to 55-70 seconds, then set `camera_duration` below that new window.
+
 ---
 
 ## 🧪 MQTT Command Reference
