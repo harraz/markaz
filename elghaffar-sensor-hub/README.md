@@ -94,7 +94,7 @@ This enables centralized control, zoning logic, and flexible future integrations
 
 The dispatcher keeps one active `REL_OFF` timer version per relay command topic. If new accepted motion arrives before the old timer expires, the new motion sends `REL_ON` again and extends the relay window. When the older timer wakes up, it sees that it is stale, logs `Skipping stale REL_OFF`, and does not turn the relay off early.
 
-The camera capture script also tracks only the child processes it starts. On exit or shutdown it stops its own `ffmpeg` and timeout helper processes instead of signaling the whole process group.
+Camera captures are bounded by Markaz with a safety timeout so a stuck `ffmpeg` process cannot keep a camera slot busy forever. If the capture process times out but a non-empty AVI was created during that attempt, Markaz logs the saved file and releases the camera slot. The capture script tracks only the `ffmpeg` child it starts and stops that process on exit instead of signaling the whole process group.
 
 ---
 

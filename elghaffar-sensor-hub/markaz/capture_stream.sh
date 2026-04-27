@@ -2,15 +2,10 @@
 set -euo pipefail
 
 ffmpeg_pid=""
-timeout_pid=""
 
 cleanup() {
-  # Only stop the child processes started by this script. Do not use "kill 0",
+  # Stop only the ffmpeg process started by this script. Do not use "kill 0",
   # because that can signal unrelated processes in the same process group.
-  if [[ -n "$timeout_pid" ]] && kill -0 "$timeout_pid" 2>/dev/null; then
-    kill "$timeout_pid" 2>/dev/null || true
-  fi
-
   if [[ -n "$ffmpeg_pid" ]] && kill -0 "$ffmpeg_pid" 2>/dev/null; then
     kill "$ffmpeg_pid" 2>/dev/null || true
   fi
@@ -39,8 +34,7 @@ TS="$(date +%Y%m%d_%H%M%S)"
 SAFE_CAM_IP="$(echo "$CAM_IP" | sed -E 's/[^a-zA-Z0-9._-]/_/g')"
 OUT="$OUTDIR/esp32cam_${SAFE_CAM_IP}_${TS}.avi"
 
-CURL_TIMEOUT=5  # Timeout for curl commands
-FFMPEG_TIMEOUT="$((DUR + 1))"  # Timeout for ffmpeg command
+CURL_TIMEOUT=1  # Timeout for optional camera control commands
 
 # Control command to set frame size with timeout
 curl -s --max-time "$CURL_TIMEOUT" "http://$CAM_IP/control?var=framesize&val=8" >/dev/null 2>&1 || true
@@ -48,36 +42,25 @@ curl -s --max-time "$CURL_TIMEOUT" "http://$CAM_IP/control?var=framesize&val=8" 
 # Control command to set quality with timeout
 curl -s --max-time "$CURL_TIMEOUT" "http://$CAM_IP/control?var=quality&val=5" >/dev/null 2>&1 || true
 
+set +e
+# Run ffmpeg as a tracked child so cleanup can stop this exact process if
+# Markaz terminates the script after its outer safety timeout.
 ffmpeg -y -loglevel error \
   -i "http://${CAM_IP}:81/stream" \
   -t "$DUR" \
   -c:v copy "$OUT" &
-
 ffmpeg_pid=$!
-
-# Start a small timeout helper. If ffmpeg runs longer than expected, ask only
-# that ffmpeg process to stop cleanly.
-( sleep "$FFMPEG_TIMEOUT" && kill "$ffmpeg_pid" 2>/dev/null ) &
-timeout_pid=$!
-
-# ffmpeg can return a non-zero status if the stream drops or the timeout helper
-# stops it. Temporarily disable "exit on error" so we can inspect that status
-# and print a useful message below.
-set +e
 wait "$ffmpeg_pid"
 status=$?
+ffmpeg_pid=""
 set -e
 
-# ffmpeg finished before the timeout helper fired, so stop the helper too.
-if kill -0 "$timeout_pid" 2>/dev/null; then
-  kill "$timeout_pid" 2>/dev/null || true
-  wait "$timeout_pid" 2>/dev/null || true
-fi
-
-if [[ $status -eq 0 ]]; then
+# Only report success when ffmpeg exited cleanly and produced a non-empty file.
+# Markaz has a fallback for the case where ffmpeg times out but the AVI exists.
+if [[ $status -eq 0 && -s "$OUT" ]]; then
   echo "Saved: $OUT"
   exit 0
 else
-  echo "ffmpeg command failed with status $status" >&2
+  echo "ffmpeg command failed with status $status; output file missing or empty: $OUT" >&2
   exit $status
 fi

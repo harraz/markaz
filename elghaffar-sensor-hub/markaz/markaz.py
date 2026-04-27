@@ -66,6 +66,8 @@ def log_markaz(message: str):
     print(f"[markaz] {message}")
 
 def create_mqtt_client():
+    # Paho MQTT 2.x warns when the old callback API is used. Prefer the new
+    # API when available, while keeping older installations working.
     if hasattr(mqtt, "CallbackAPIVersion"):
         return mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
     return mqtt.Client()
@@ -120,6 +122,9 @@ def handle_motion(client, msg, payload, current_timestamp):
         log_markaz(f"{current_timestamp} - [Relay] {msg.topic} Sending REL_ON to {relay_cmd_topic}")
         client.publish(relay_cmd_topic, "REL_ON")
 
+        # Each accepted motion gets a new timer version for this relay target.
+        # Older delayed-off threads compare their saved version to the current
+        # one before sending REL_OFF, so the latest accepted motion wins.
         relay_off_timer_lock.acquire()
         try:
             relay_off_timer_versions[relay_cmd_topic] += 1
@@ -180,7 +185,11 @@ def process_motion_events():
 
             with active_captures_lock:
                 if cam_ip in active_captures:
-                    log_markaz(f"{current_timestamp} - Capture already running for {cam_ip}, skipping")
+                    # One ffmpeg recording per camera is enough. New motion
+                    # during that recording is treated as part of the active
+                    # capture instead of starting overlapping ffmpeg jobs.
+                    log_markaz(f"{current_timestamp} - Capture already running for {cam_ip}, merging {len(events)} motion events into current capture.")
+                    motion_events[cam_ip] = []
                     continue
                 active_captures.add(cam_ip)
 
@@ -262,17 +271,52 @@ def cleanup_loop():
             log_markaz(f"{datetime.now()} - Error in cleanup loop: {e}. Continuing...")
 
 
+def find_capture_file_created_after(cam_ip, started_at):
+    # Some ESP32-CAM streams write a playable AVI, but ffmpeg does not return
+    # before Markaz's safety timeout. Use the file timestamp and size to recover
+    # that as a successful capture instead of leaving it marked as failed.
+    safe_cam_ip = ''.join(c if c.isalnum() or c in '._-' else '_' for c in cam_ip)
+    output_dir = os.path.expanduser(CAMERA_OUTPUT_DIR)
+    pattern = os.path.join(output_dir, f"esp32cam_{safe_cam_ip}_*.avi")
+    candidates = []
+
+    for video_file in glob.glob(pattern):
+        try:
+            if os.path.getsize(video_file) > 0 and os.path.getmtime(video_file) >= started_at:
+                candidates.append(video_file)
+        except OSError:
+            continue
+
+    if not candidates:
+        return None
+
+    return max(candidates, key=os.path.getmtime)
+
+
 def run_capture(cam_ip, duration=CAMERA_DURATION, retries=CAMERA_RETRIES, wait_time=CAMERA_WAIT_TIME):
     try:
         script_path = CAPTURE_SCRIPT
         command = ['bash', script_path, cam_ip, str(duration)]
         capture_env = os.environ.copy()
+        # capture_stream.sh uses OUTDIR, so set it explicitly instead of
+        # depending on the HOME of the service/user running Markaz.
         capture_env['OUTDIR'] = os.path.expanduser(CAMERA_OUTPUT_DIR)
+        # Keep this longer than the requested recording time so ffmpeg has room
+        # to finalize the AVI, but still guarantee active_captures is released.
+        capture_timeout = duration + 20
 
         for attempt in range(retries):
             try:
+                attempt_started_at = time.time()
                 log_markaz(f"{datetime.now()} - Attempting to start camera capture for {cam_ip} (Attempt {attempt + 1})...")
-                result = subprocess.run(command, capture_output=True, text=True, check=True, env=capture_env)
+                result = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    env=capture_env,
+                    timeout=capture_timeout,
+                )
                 log_markaz(str(result))
                 #print("Video Output:", result.stdout)
                 #print("Script executed successfully.")
@@ -283,12 +327,23 @@ def run_capture(cam_ip, duration=CAMERA_DURATION, retries=CAMERA_RETRIES, wait_t
                 if attempt < retries - 1:
                     log_markaz(f"{datetime.now()} - Retrying in {wait_time} seconds...")
                     time.sleep(wait_time)  # Wait before retrying
+            except subprocess.TimeoutExpired as e:
+                saved_file = find_capture_file_created_after(cam_ip, attempt_started_at)
+                if saved_file:
+                    log_markaz(f"{datetime.now()} - Capture attempt {attempt + 1} timed out after {capture_timeout} seconds for {cam_ip}, but saved video exists: {saved_file}")
+                    return
+
+                log_markaz(f"{datetime.now()} - Capture attempt {attempt + 1} timed out after {capture_timeout} seconds for {cam_ip}. Output: {e.stderr}")
+                if attempt < retries - 1:
+                    log_markaz(f"{datetime.now()} - Retrying in {wait_time} seconds...")
+                    time.sleep(wait_time)  # Wait before retrying
 
         log_markaz(f"{datetime.now()} - All attempts to start camera capture for {cam_ip} have failed.")
 
     finally:
         with active_captures_lock:
             active_captures.discard(cam_ip)
+        log_markaz(f"{datetime.now()} - Capture slot released for {cam_ip}.")
 
 
 def main():
