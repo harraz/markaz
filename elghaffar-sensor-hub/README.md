@@ -113,11 +113,36 @@ Example dispatcher behavior:
 - Extracts: `GHAFEER_NAME` and `MAC` from the topic
 - Determines which action device(s) to activate
 - Sends `REL_ON` to `home/{ActionName}/{MAC}/cmd`
-- Waits (e.g., 15 seconds), then sends `REL_OFF`
+- Schedules `REL_OFF` for the configured trigger delay
 
 This enables centralized control, zoning logic, and flexible future integrations such as AI filtering or event scheduling.
 
 > ⚙️ MQTT broker and dispatcher both run on a local Raspberry Pi, allowing full control of local automation without the cloud.
+
+### Dispatcher Reliability Notes
+
+The dispatcher keeps one active `REL_OFF` timer version per relay command topic. If new accepted motion arrives before the old timer expires, the new motion sends `REL_ON` again and extends the relay window. When the older timer wakes up, it sees that it is stale, logs `Skipping stale REL_OFF`, and does not turn the relay off early.
+
+Camera captures are bounded by Markaz with a safety timeout so a stuck `ffmpeg` process cannot keep a camera slot busy forever. If the capture process times out but a non-empty AVI was created during that attempt, Markaz logs the saved file and releases the camera slot. The capture script tracks only the `ffmpeg` child it starts and stops that process on exit instead of signaling the whole process group.
+
+For deep-sleep camera boards, `camera_start_delay` can delay capture startup for a few seconds after `REL_ON`. This gives the ESP32-CAM HTTP server time to begin listening before `ffmpeg` connects.
+
+Relevant dispatcher settings in `markaz/config.json`:
+
+| Setting | Purpose |
+|---------|---------|
+| `camera_duration` | Requested ffmpeg recording length in seconds. Keep this shorter than the board's awake window. |
+| `camera_start_delay` | Seconds to wait after `REL_ON` before starting ffmpeg, useful when the camera HTTP server needs time to boot. |
+| `camera_retries` | Number of capture attempts. Deep-sleep cameras usually benefit from few quick attempts rather than long retries after the awake window is gone. |
+| `camera_output_dir` | Local directory passed to `capture_stream.sh` as `OUTDIR`, so output does not depend on the service user's `HOME`. |
+
+When increasing video length for a deep-sleep camera, increase the firmware awake/relay window first, then increase `camera_duration`. Keep this relationship true:
+
+```
+camera_start_delay + camera_duration + safety_margin < post_trigger_awake_window
+```
+
+A practical safety margin is about 5 seconds. For example, if firmware reports `post_trigger_awake_window_ms: 35000` and `camera_start_delay` is 6 seconds, a safe `camera_duration` is around 20-24 seconds. For longer videos, raise the firmware awake window first, for example to 55-70 seconds, then set `camera_duration` below that new window.
 
 ---
 

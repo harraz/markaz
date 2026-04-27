@@ -1,14 +1,16 @@
 {
-  "broker": "localhost",
+  "broker": "192.168.1.246",
   "broker_port": 1883,
   "topics": ["home/+/+/motion", "home/+/+/status"],
   "motion_threshold": 3,
-  "cooldown_period": 30,
-  "camera_duration": 50,
-  "camera_retries": 3,
+  "cooldown_period": 300,
+  "camera_duration": 20,
+  "camera_retries": 1,
   "camera_wait_time": 2,
+  "camera_start_delay": 6,
   "camera_capture_script": "./capture_stream.sh",
-  "sound_enabled": true,
+  "camera_output_dir": "/home/harraz/Videos",
+  "sound_enabled": false,
   "sound_path": "/home/harraz/Downloads/",
   "sound_files": {
     "8CCE4EE74956": "alarm-no3-14864.mp3",
@@ -17,12 +19,11 @@
   },
   "log_level": "INFO",
   "triggers": {
-    "244CAB4F1201": [["DAHROOG", "5CCF7F44C358", 60]],
-    "4CEBD6ECEB83": [["DAHROOG", "5CCF7F44C358", 60]],
-    "8CCE4EE74956": [["DAHROOG", "5CCF7F44C358", 60]]
+    "8CCE4EE74956": [["DAHROOG", "5CCF7F44C358", 60]],
+    "E8F60A16E1EC": [["HAGGRAS", "E8F60A16E1EC", 60]]
   },
   "cam_by_source": {
-    "5CCF7F44C358": "192.168.1.179"
+    "E8F60A16E1EC": "192.168.1.179"
   },
   "video_cleanup": {
     "source_pattern": "/home/harraz/Videos/*.avi",

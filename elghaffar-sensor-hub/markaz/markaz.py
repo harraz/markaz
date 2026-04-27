@@ -6,7 +6,6 @@ import threading
 import json
 from datetime import datetime
 from collections import defaultdict
-import pygame
 import subprocess
 
 # Load configuration from JSON file
@@ -22,10 +21,12 @@ COOLDOWN_PERIOD = config['cooldown_period']
 CAMERA_DURATION = config['camera_duration']
 CAMERA_RETRIES = config['camera_retries']
 CAMERA_WAIT_TIME = config['camera_wait_time']
+CAMERA_START_DELAY = config.get('camera_start_delay', 0)
 SOUND_ENABLED = config['sound_enabled']
 SOUND_PATH = config['sound_path']
 LOG_LEVEL = config['log_level']
 CAPTURE_SCRIPT = config.get('camera_capture_script', './capture_stream.sh')
+CAMERA_OUTPUT_DIR = config.get('camera_output_dir')
 SOUND_FILES = config.get('sound_files', {})
 
 # Mapping: source ESP MAC -> list of (target location, target MAC, relay ON time)
@@ -40,7 +41,15 @@ VIDEO_DEST_DIR = VIDEO_CLEANUP.get('dest_dir', '~/network-share/disk1/share/moti
 VIDEO_INTERVAL_HOURS = VIDEO_CLEANUP.get('interval_hours', 6)
 VIDEO_LOG_FILE = os.path.expanduser(VIDEO_CLEANUP.get('log_file', '~/video_cleanup_rsync.log'))
 
+if CAMERA_OUTPUT_DIR is None:
+    CAMERA_OUTPUT_DIR = os.path.dirname(VIDEO_SOURCE_PATTERN) or '~/Videos'
+
 motion_count = defaultdict(lambda: {'count': 0, 'last_time': 0.0})
+
+# Track the current REL_OFF timer version per relay command topic. This lets
+# new motion extend the relay window without an older timer turning it off early.
+relay_off_timer_versions = defaultdict(int)
+relay_off_timer_lock = threading.Lock()
 
 # Dictionary to collect motion events by camera IP
 motion_events = {}
@@ -52,9 +61,17 @@ active_captures_lock = threading.Lock()
 
 # Lock for pygame mixer operations (not thread-safe)
 sound_lock = threading.Lock()
+pygame = None
 
 def log_markaz(message: str):
     print(f"[markaz] {message}")
+
+def create_mqtt_client():
+    # Paho MQTT 2.x warns when the old callback API is used. Prefer the new
+    # API when available, while keeping older installations working.
+    if hasattr(mqtt, "CallbackAPIVersion"):
+        return mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    return mqtt.Client()
 
 def on_message(client, userdata, msg):
     current_timestamp = (datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
@@ -106,12 +123,33 @@ def handle_motion(client, msg, payload, current_timestamp):
         log_markaz(f"{current_timestamp} - [Relay] {msg.topic} Sending REL_ON to {relay_cmd_topic}")
         client.publish(relay_cmd_topic, "REL_ON")
 
-        def delayed_off(topic=relay_cmd_topic, motion_topic=msg.topic):
+        # Each accepted motion gets a new timer version for this relay target.
+        # Older delayed-off threads compare their saved version to the current
+        # one before sending REL_OFF, so the latest accepted motion wins.
+        relay_off_timer_lock.acquire()
+        try:
+            relay_off_timer_versions[relay_cmd_topic] += 1
+            off_timer_version = relay_off_timer_versions[relay_cmd_topic]
+        finally:
+            relay_off_timer_lock.release()
+
+        def delayed_off(topic=relay_cmd_topic, motion_topic=msg.topic, timer_version=off_timer_version):
+            time.sleep(delay)
+
+            relay_off_timer_lock.acquire()
+            try:
+                if relay_off_timer_versions[topic] != timer_version:
+                    off_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    log_markaz(f"{off_timestamp} - [Relay] {motion_topic} Skipping stale REL_OFF to {topic}")
+                    return
+            finally:
+                relay_off_timer_lock.release()
+
             off_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             log_markaz(f"{off_timestamp} - [Relay] {motion_topic} Sending REL_OFF to {topic}")
             client.publish(topic, "REL_OFF")
 
-        threading.Thread(target=lambda: (time.sleep(delay), delayed_off()), daemon=True).start()
+        threading.Thread(target=delayed_off, daemon=True).start()
 
         # Play the appropriate sound (if enabled)
         if SOUND_ENABLED:
@@ -148,7 +186,11 @@ def process_motion_events():
 
             with active_captures_lock:
                 if cam_ip in active_captures:
-                    log_markaz(f"{current_timestamp} - Capture already running for {cam_ip}, skipping")
+                    # One ffmpeg recording per camera is enough. New motion
+                    # during that recording is treated as part of the active
+                    # capture instead of starting overlapping ffmpeg jobs.
+                    log_markaz(f"{current_timestamp} - Capture already running for {cam_ip}, merging {len(events)} motion events into current capture.")
+                    motion_events[cam_ip] = []
                     continue
                 active_captures.add(cam_ip)
 
@@ -230,15 +272,56 @@ def cleanup_loop():
             log_markaz(f"{datetime.now()} - Error in cleanup loop: {e}. Continuing...")
 
 
-def run_capture(cam_ip, duration=CAMERA_DURATION, retries=CAMERA_RETRIES, wait_time=CAMERA_WAIT_TIME):
+def find_capture_file_created_after(cam_ip, started_at):
+    # Some ESP32-CAM streams write a playable AVI, but ffmpeg does not return
+    # before Markaz's safety timeout. Use the file timestamp and size to recover
+    # that as a successful capture instead of leaving it marked as failed.
+    safe_cam_ip = ''.join(c if c.isalnum() or c in '._-' else '_' for c in cam_ip)
+    output_dir = os.path.expanduser(CAMERA_OUTPUT_DIR)
+    pattern = os.path.join(output_dir, f"esp32cam_{safe_cam_ip}_*.avi")
+    candidates = []
+
+    for video_file in glob.glob(pattern):
+        try:
+            if os.path.getsize(video_file) > 0 and os.path.getmtime(video_file) >= started_at:
+                candidates.append(video_file)
+        except OSError:
+            continue
+
+    if not candidates:
+        return None
+
+    return max(candidates, key=os.path.getmtime)
+
+
+def run_capture(cam_ip, duration=CAMERA_DURATION, retries=CAMERA_RETRIES, wait_time=CAMERA_WAIT_TIME, start_delay=CAMERA_START_DELAY):
     try:
         script_path = CAPTURE_SCRIPT
         command = ['bash', script_path, cam_ip, str(duration)]
+        capture_env = os.environ.copy()
+        # capture_stream.sh uses OUTDIR, so set it explicitly instead of
+        # depending on the HOME of the service/user running Markaz.
+        capture_env['OUTDIR'] = os.path.expanduser(CAMERA_OUTPUT_DIR)
+        # Keep this longer than the requested recording time so ffmpeg has room
+        # to finalize the AVI, but still guarantee active_captures is released.
+        capture_timeout = duration + 20
+
+        if start_delay > 0:
+            log_markaz(f"{datetime.now()} - Waiting {start_delay} seconds before camera capture for {cam_ip}.")
+            time.sleep(start_delay)
 
         for attempt in range(retries):
             try:
+                attempt_started_at = time.time()
                 log_markaz(f"{datetime.now()} - Attempting to start camera capture for {cam_ip} (Attempt {attempt + 1})...")
-                result = subprocess.run(command, capture_output=True, text=True, check=True)
+                result = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    env=capture_env,
+                    timeout=capture_timeout,
+                )
                 log_markaz(str(result))
                 #print("Video Output:", result.stdout)
                 #print("Script executed successfully.")
@@ -249,16 +332,29 @@ def run_capture(cam_ip, duration=CAMERA_DURATION, retries=CAMERA_RETRIES, wait_t
                 if attempt < retries - 1:
                     log_markaz(f"{datetime.now()} - Retrying in {wait_time} seconds...")
                     time.sleep(wait_time)  # Wait before retrying
+            except subprocess.TimeoutExpired as e:
+                saved_file = find_capture_file_created_after(cam_ip, attempt_started_at)
+                if saved_file:
+                    log_markaz(f"{datetime.now()} - Capture attempt {attempt + 1} timed out after {capture_timeout} seconds for {cam_ip}, but saved video exists: {saved_file}")
+                    return
+
+                log_markaz(f"{datetime.now()} - Capture attempt {attempt + 1} timed out after {capture_timeout} seconds for {cam_ip}. Output: {e.stderr}")
+                if attempt < retries - 1:
+                    log_markaz(f"{datetime.now()} - Retrying in {wait_time} seconds...")
+                    time.sleep(wait_time)  # Wait before retrying
 
         log_markaz(f"{datetime.now()} - All attempts to start camera capture for {cam_ip} have failed.")
 
     finally:
         with active_captures_lock:
             active_captures.discard(cam_ip)
+        log_markaz(f"{datetime.now()} - Capture slot released for {cam_ip}.")
 
 
 def main():
-    client = mqtt.Client()
+    global pygame
+
+    client = create_mqtt_client()
     client.on_message = on_message
 
     log_markaz(f"Connecting to MQTT broker at {BROKER}:{BROKER_PORT}...")
@@ -268,7 +364,10 @@ def main():
         client.subscribe(topic)
         log_markaz(f"Subscribed to: {topic}")
     
-    pygame.mixer.init()
+    if SOUND_ENABLED:
+        import pygame as pygame_module
+        pygame = pygame_module
+        pygame.mixer.init()
 
     # Keep cleanup on a non-daemon thread so the process does not tear it down
     # in the middle of a long-running rsync.
