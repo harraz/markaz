@@ -6,7 +6,6 @@ import threading
 import json
 from datetime import datetime
 from collections import defaultdict
-import pygame
 import subprocess
 
 # Load configuration from JSON file
@@ -26,6 +25,7 @@ SOUND_ENABLED = config['sound_enabled']
 SOUND_PATH = config['sound_path']
 LOG_LEVEL = config['log_level']
 CAPTURE_SCRIPT = config.get('camera_capture_script', './capture_stream.sh')
+CAMERA_OUTPUT_DIR = config.get('camera_output_dir')
 SOUND_FILES = config.get('sound_files', {})
 
 # Mapping: source ESP MAC -> list of (target location, target MAC, relay ON time)
@@ -39,6 +39,9 @@ VIDEO_SOURCE_PATTERN = VIDEO_CLEANUP.get('source_pattern', '/home/harraz/Videos/
 VIDEO_DEST_DIR = VIDEO_CLEANUP.get('dest_dir', '~/network-share/disk1/share/motion_videos/')
 VIDEO_INTERVAL_HOURS = VIDEO_CLEANUP.get('interval_hours', 6)
 VIDEO_LOG_FILE = os.path.expanduser(VIDEO_CLEANUP.get('log_file', '~/video_cleanup_rsync.log'))
+
+if CAMERA_OUTPUT_DIR is None:
+    CAMERA_OUTPUT_DIR = os.path.dirname(VIDEO_SOURCE_PATTERN) or '~/Videos'
 
 motion_count = defaultdict(lambda: {'count': 0, 'last_time': 0.0})
 
@@ -57,9 +60,15 @@ active_captures_lock = threading.Lock()
 
 # Lock for pygame mixer operations (not thread-safe)
 sound_lock = threading.Lock()
+pygame = None
 
 def log_markaz(message: str):
     print(f"[markaz] {message}")
+
+def create_mqtt_client():
+    if hasattr(mqtt, "CallbackAPIVersion"):
+        return mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    return mqtt.Client()
 
 def on_message(client, userdata, msg):
     current_timestamp = (datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
@@ -257,11 +266,13 @@ def run_capture(cam_ip, duration=CAMERA_DURATION, retries=CAMERA_RETRIES, wait_t
     try:
         script_path = CAPTURE_SCRIPT
         command = ['bash', script_path, cam_ip, str(duration)]
+        capture_env = os.environ.copy()
+        capture_env['OUTDIR'] = os.path.expanduser(CAMERA_OUTPUT_DIR)
 
         for attempt in range(retries):
             try:
                 log_markaz(f"{datetime.now()} - Attempting to start camera capture for {cam_ip} (Attempt {attempt + 1})...")
-                result = subprocess.run(command, capture_output=True, text=True, check=True)
+                result = subprocess.run(command, capture_output=True, text=True, check=True, env=capture_env)
                 log_markaz(str(result))
                 #print("Video Output:", result.stdout)
                 #print("Script executed successfully.")
@@ -281,7 +292,9 @@ def run_capture(cam_ip, duration=CAMERA_DURATION, retries=CAMERA_RETRIES, wait_t
 
 
 def main():
-    client = mqtt.Client()
+    global pygame
+
+    client = create_mqtt_client()
     client.on_message = on_message
 
     log_markaz(f"Connecting to MQTT broker at {BROKER}:{BROKER_PORT}...")
@@ -292,6 +305,8 @@ def main():
         log_markaz(f"Subscribed to: {topic}")
     
     if SOUND_ENABLED:
+        import pygame as pygame_module
+        pygame = pygame_module
         pygame.mixer.init()
 
     # Keep cleanup on a non-daemon thread so the process does not tear it down

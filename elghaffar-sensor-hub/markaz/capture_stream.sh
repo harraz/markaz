@@ -43,10 +43,10 @@ CURL_TIMEOUT=5  # Timeout for curl commands
 FFMPEG_TIMEOUT="$((DUR + 1))"  # Timeout for ffmpeg command
 
 # Control command to set frame size with timeout
-curl -s --max-time "$CURL_TIMEOUT" "http://$CAM_IP/control?var=framesize&val=8" >/dev/null 2>&1
+curl -s --max-time "$CURL_TIMEOUT" "http://$CAM_IP/control?var=framesize&val=8" >/dev/null 2>&1 || true
 
 # Control command to set quality with timeout
-curl -s --max-time "$CURL_TIMEOUT" "http://$CAM_IP/control?var=quality&val=5" >/dev/null 2>&1
+curl -s --max-time "$CURL_TIMEOUT" "http://$CAM_IP/control?var=quality&val=5" >/dev/null 2>&1 || true
 
 ffmpeg -y -loglevel error \
   -i "http://${CAM_IP}:81/stream" \

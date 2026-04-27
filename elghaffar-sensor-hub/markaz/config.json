@@ -1,5 +1,5 @@
 {
-  "broker": "localhost",
+  "broker": "192.168.1.246",
   "broker_port": 1883,
   "topics": ["home/+/+/motion", "home/+/+/status"],
   "motion_threshold": 3,
@@ -8,6 +8,7 @@
   "camera_retries": 3,
   "camera_wait_time": 2,
   "camera_capture_script": "./capture_stream.sh",
+  "camera_output_dir": "/home/harraz/Videos",
   "sound_enabled": false,
   "sound_path": "/home/harraz/Downloads/",
   "sound_files": {
