@@ -2,8 +2,8 @@
   "broker": "192.168.1.246",
   "broker_port": 1883,
   "topics": ["home/+/+/motion", "home/+/+/status"],
-  "motion_threshold": 3,
-  "cooldown_period": 300,
+  "motion_threshold": 2,
+  "cooldown_period": 600,
   "camera_duration": 20,
   "camera_retries": 1,
   "camera_wait_time": 2,
@@ -19,11 +19,16 @@
   },
   "log_level": "INFO",
   "triggers": {
+    "E8F60A16CCF4": [["HANAFEE2", "F008D101FFF0", 60]],
+    "84F3EB1E1BB2": [["HANAFEE2", "F008D101FFF0", 60]],
+    "ECFABCA97F91": [["HANAFEE2", "F008D101FFF0", 60]],
     "8CCE4EE74956": [["DAHROOG", "5CCF7F44C358", 60]],
+    "E8F60A16E85C": [["ABBAS", "E8F60A16E85C", 60]], 
     "E8F60A16E1EC": [["HAGGRAS", "E8F60A16E1EC", 60]]
   },
   "cam_by_source": {
-    "E8F60A16E1EC": "192.168.1.179"
+    "E8F60A16E1EC": "192.168.1.179",
+    "E8F60A16E85C": "192.168.1.179"
   },
   "video_cleanup": {
     "source_pattern": "/home/harraz/Videos/*.avi",

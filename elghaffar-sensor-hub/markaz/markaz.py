@@ -32,7 +32,8 @@ SOUND_FILES = config.get('sound_files', {})
 # Mapping: source ESP MAC -> list of (target location, target MAC, relay ON time)
 TRIGGERS = config['triggers']
 
-CAM_BY_SOURCE = config['cam_by_source']
+# CAM_BY_SOURCE = config['cam_by_source']
+CAM_BY_SOURCE = config.get('cam_by_source', {})
 
 # Video cleanup configuration
 VIDEO_CLEANUP = config.get('video_cleanup', {})
@@ -97,6 +98,7 @@ def handle_motion(client, msg, payload, current_timestamp):
     data = json.loads(payload)
     source_mac = data.get("mac", "")
     cam_ip = CAM_BY_SOURCE.get(source_mac)
+    print(cam_ip)
     current_time = time.time()  # Get the current time in seconds
 
     if source_mac not in TRIGGERS:
@@ -117,6 +119,8 @@ def handle_motion(client, msg, payload, current_timestamp):
         # Reset count and last_time if cooldown period has passed
         motion_count[source_mac]['count'] = 1
         motion_count[source_mac]['last_time'] = current_time
+
+    print(target_location, target_mac, delay)
 
     for target_location, target_mac, delay in TRIGGERS[source_mac]:
         relay_cmd_topic = f"home/{target_location}/{target_mac}/cmd"
@@ -162,7 +166,7 @@ def handle_motion(client, msg, payload, current_timestamp):
         if cam_ip:
             motion_events.setdefault(cam_ip, []).append(current_timestamp)
 
-        #print(TRIGGERS[source_mac][0][1])
+        print(TRIGGERS[source_mac][0][1])
         if source_mac:
             target_ghafeer_mac = TRIGGERS[source_mac][0][1]
             remote_cam_ip = CAM_BY_SOURCE.get(target_ghafeer_mac)
