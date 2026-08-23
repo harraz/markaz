@@ -93,35 +93,57 @@ def on_message(client, userdata, msg):
     except Exception as e:
         log_markaz(f"{current_timestamp} - Error handling message: {e}")
 
+def lookup_camera_ip(*source_ids):
+    for source_id in source_ids:
+        if source_id and source_id in CAM_BY_SOURCE:
+            return CAM_BY_SOURCE[source_id]
+    return None
+
+
+def queue_camera_capture(cam_ip, current_timestamp):
+    if cam_ip:
+        motion_events.setdefault(cam_ip, []).append(current_timestamp)
+
+
 def handle_motion(client, msg, payload, current_timestamp):
     data = json.loads(payload)
     source_mac = data.get("mac", "")
-    cam_ip = CAM_BY_SOURCE.get(source_mac)
+    source_name = data.get("name") or data.get("ghafeer_name") or data.get("location")
+
+    source_key = source_mac if source_mac in TRIGGERS else source_name
     current_time = time.time()  # Get the current time in seconds
 
-    if source_mac not in TRIGGERS:
-        log_markaz(f"{current_timestamp} - No relay trigger configured for source MAC: {source_mac}")
+    if source_key not in TRIGGERS:
+        log_markaz(f"{current_timestamp} - No relay trigger configured for source: mac={source_mac}, name={source_name}")
         return  # Return if no triggers are found
 
     # Throttle logic
-    if motion_count[source_mac]['last_time'] == 0:
-        motion_count[source_mac]['last_time'] = current_time
+    if motion_count[source_key]['last_time'] == 0:
+        motion_count[source_key]['last_time'] = current_time
 
     # Check if the cooldown period has passed
-    if current_time - motion_count[source_mac]['last_time'] < COOLDOWN_PERIOD:
-        motion_count[source_mac]['count'] += 1
-        if motion_count[source_mac]['count'] > MOTION_THRESHOLD:
-            log_markaz(f"{current_timestamp} - [Throttled] Motion from {source_mac} ignored due to cooldown.")
+    if current_time - motion_count[source_key]['last_time'] < COOLDOWN_PERIOD:
+        motion_count[source_key]['count'] += 1
+        if motion_count[source_key]['count'] > MOTION_THRESHOLD:
+            log_markaz(f"{current_timestamp} - [Throttled] Motion from {source_key} ignored due to cooldown.")
             return  # Ignore this motion event
     else:
         # Reset count and last_time if cooldown period has passed
-        motion_count[source_mac]['count'] = 1
-        motion_count[source_mac]['last_time'] = current_time
+        motion_count[source_key]['count'] = 1
+        motion_count[source_key]['last_time'] = current_time
 
-    for target_location, target_mac, delay in TRIGGERS[source_mac]:
-        relay_cmd_topic = f"home/{target_location}/{target_mac}/cmd"
+    with motion_events_lock:
+        queue_camera_capture(lookup_camera_ip(source_key, source_mac, source_name), current_timestamp)
+
+    for target_location, target_id, delay in TRIGGERS[source_key]:
+        relay_cmd_topic = f"home/{target_location}/{target_id}/cmd"
+        target_cam_ip = lookup_camera_ip(target_id, target_location)
         log_markaz(f"{current_timestamp} - [Relay] {msg.topic} Sending REL_ON to {relay_cmd_topic}")
         client.publish(relay_cmd_topic, "REL_ON")
+
+        with motion_events_lock:
+            queue_camera_capture(target_cam_ip, current_timestamp)
+        log_markaz(f"{current_timestamp} - Target ESP {target_id} camera: {target_cam_ip}")
 
         # Each accepted motion gets a new timer version for this relay target.
         # Older delayed-off threads compare their saved version to the current
@@ -153,22 +175,9 @@ def handle_motion(client, msg, payload, current_timestamp):
 
         # Play the appropriate sound (if enabled)
         if SOUND_ENABLED:
-            sound_file = SOUND_FILES.get(source_mac, SOUND_FILES.get('default'))
+            sound_file = SOUND_FILES.get(source_key, SOUND_FILES.get(source_mac, SOUND_FILES.get('default')))
             if sound_file:
                 threading.Thread(target=play_sound, args=(sound_file,), daemon=True).start()
-    
-    # Collect motion events for this camera IP
-    with motion_events_lock:
-        if cam_ip:
-            motion_events.setdefault(cam_ip, []).append(current_timestamp)
-
-        #print(TRIGGERS[source_mac][0][1])
-        if source_mac:
-            target_ghafeer_mac = TRIGGERS[source_mac][0][1]
-            remote_cam_ip = CAM_BY_SOURCE.get(target_ghafeer_mac)
-            if remote_cam_ip:
-                motion_events.setdefault(remote_cam_ip, []).append(current_timestamp)
-            log_markaz(f"{current_timestamp} - Calling Ghafeer mac - {target_ghafeer_mac} :Remote ghafeer camera - {remote_cam_ip}")
 
 def handle_status(msg, payload, current_timestamp):
     # For status topics, just log the payload
