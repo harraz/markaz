@@ -22,6 +22,13 @@
   },
   "log_level": "INFO",
   "triggers": {
+    "E8F60A16CCF4": [
+      [
+        "HANAFEE2",
+        "F008D101FFF0",
+        60
+      ]
+    ],
     "8CCE4EE74956": [
       [
         "DAHROOG",
@@ -36,17 +43,17 @@
         60
       ]
     ],
-    "ABBAS": [
+    "E8F60A16E85C": [
       [
         "ABBAS",
-        "ABBAS",
+        "E8F60A16E85C",
         60
       ]
     ]
   },
   "cam_by_source": {
     "E8F60A16E1EC": "192.168.1.179",
-    "ABBAS": "192.168.1.179"
+    "E8F60A16E85C": "192.168.1.179"
   },
   "video_cleanup": {
     "source_pattern": "/home/harraz/Videos/*.avi",
