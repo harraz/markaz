@@ -132,18 +132,12 @@ def handle_motion(client, msg, payload, current_timestamp):
         motion_count[source_key]['count'] = 1
         motion_count[source_key]['last_time'] = current_time
 
-    with motion_events_lock:
-        queue_camera_capture(lookup_camera_ip(source_key, source_mac, source_name), current_timestamp)
+    trigger_targets = TRIGGERS[source_key]
 
-    for target_location, target_id, delay in TRIGGERS[source_key]:
+    for target_location, target_id, delay in trigger_targets:
         relay_cmd_topic = f"home/{target_location}/{target_id}/cmd"
-        target_cam_ip = lookup_camera_ip(target_id, target_location)
         log_markaz(f"{current_timestamp} - [Relay] {msg.topic} Sending REL_ON to {relay_cmd_topic}")
         client.publish(relay_cmd_topic, "REL_ON")
-
-        with motion_events_lock:
-            queue_camera_capture(target_cam_ip, current_timestamp)
-        log_markaz(f"{current_timestamp} - Target ESP {target_id} camera: {target_cam_ip}")
 
         # Each accepted motion gets a new timer version for this relay target.
         # Older delayed-off threads compare their saved version to the current
@@ -178,6 +172,13 @@ def handle_motion(client, msg, payload, current_timestamp):
             sound_file = SOUND_FILES.get(source_key, SOUND_FILES.get(source_mac, SOUND_FILES.get('default')))
             if sound_file:
                 threading.Thread(target=play_sound, args=(sound_file,), daemon=True).start()
+
+    # Camera capture is configured separately from relay routing. A trigger target
+    # only starts capture when that ESP/location has an entry in cam_by_source.
+    with motion_events_lock:
+        queue_camera_capture(lookup_camera_ip(source_key, source_mac, source_name), current_timestamp)
+        for target_location, target_id, _ in trigger_targets:
+            queue_camera_capture(lookup_camera_ip(target_id, target_location), current_timestamp)
 
 def handle_status(msg, payload, current_timestamp):
     # For status topics, just log the payload

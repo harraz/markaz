@@ -22,13 +22,6 @@
   },
   "log_level": "INFO",
   "triggers": {
-    "ABBAS": [
-      [
-        "ABBAS",
-        "ABBAS",
-        60
-      ]
-    ],
     "8CCE4EE74956": [
       [
         "DAHROOG",
@@ -42,9 +35,17 @@
         "E8F60A16E1EC",
         60
       ]
+    ],
+    "ABBAS": [
+      [
+        "ABBAS",
+        "ABBAS",
+        60
+      ]
     ]
   },
   "cam_by_source": {
+    "E8F60A16E1EC": "192.168.1.179",
     "ABBAS": "192.168.1.179"
   },
   "video_cleanup": {
