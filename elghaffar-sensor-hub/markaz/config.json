@@ -22,10 +22,10 @@
   },
   "log_level": "INFO",
   "triggers": {
-      "E8F60A16E85C": [
+    "E8F60A16E1EC": [
       [
-        "HANAFEE2",
-        "F008D101FFF0",
+        "HAGGRAS",
+        "E8F60A16E1EC",
         60
       ]
     ],
@@ -40,20 +40,6 @@
       [
         "DAHROOG",
         "5CCF7F44C358",
-        60
-      ]
-    ],
-    "E8F60A16E1EC": [
-      [
-        "HAGGRAS",
-        "E8F60A16E1EC",
-        60
-      ]
-    ],
-    "E8F60A16E85C": [
-      [
-        "ABBAS",
-        "E8F60A16E85C",
         60
       ]
     ]
